@@ -104,6 +104,51 @@ class FrameHandsAdapterTest(unittest.TestCase):
         with self.assertRaises(FrameHandsError):
             recording_frames_from_results([frame([]), frame([], size=[1280, 720])])
 
+    def test_empty_recording_returns_empty_list(self):
+        self.assertEqual(recording_frames_from_results([frame([]), frame([])]), [])
+
+    def test_rejects_non_boolean_mirror_input(self):
+        with self.assertRaises(FrameHandsError):
+            frame_hands_from_result({"mirror_input": "false", "hands": []})
+
+    def test_rejects_non_array_hands(self):
+        with self.assertRaises(FrameHandsError):
+            frame_hands_from_result({"mirror_input": False, "hands": {}})
+
+    def test_rejects_invalid_handedness(self):
+        for value in (-0.1, 1.1, float("nan"), float("inf")):
+            with self.subTest(value=value), self.assertRaises(FrameHandsError):
+                frame_hands_from_result(
+                    {"mirror_input": False, "hands": [hand(value, "LEFT")]}
+                )
+
+    def test_rejects_invalid_confidence(self):
+        for value in (-0.1, 1.1, float("nan"), float("inf")):
+            with self.subTest(value=value), self.assertRaises(FrameHandsError):
+                frame_hands_from_result(
+                    {
+                        "mirror_input": False,
+                        "hands": [hand(0.8, "LEFT", confidence=value)],
+                    }
+                )
+
+    def test_rejects_non_finite_landmark(self):
+        for value in (float("nan"), float("inf")):
+            bad = hand(0.8, "LEFT")
+            bad["landmarks_xy"][0][0] = value
+            with self.subTest(value=value), self.assertRaises(FrameHandsError):
+                frame_hands_from_result({"mirror_input": False, "hands": [bad]})
+
+    def test_rejects_missing_required_hand_field(self):
+        bad = hand(0.8, "LEFT")
+        del bad["hand_confidence"]
+        with self.assertRaises(FrameHandsError):
+            frame_hands_from_result({"mirror_input": False, "hands": [bad]})
+
+    def test_rejects_invalid_image_size(self):
+        with self.assertRaises(FrameHandsError):
+            recording_frames_from_results([frame([], size=[0, 480])])
+
     def test_loads_jsonl(self):
         documents = [frame([]), frame([hand(0.8, "LEFT")])]
         with tempfile.TemporaryDirectory() as directory:
