@@ -1,0 +1,23 @@
+{
+  "count": 2016,
+  "image_size_wh": [
+    640,
+    480
+  ],
+  "input_size_wh": [
+    192,
+    192
+  ],
+  "pad_bias_xy": [
+    0,
+    80
+  ],
+  "scale": 640,
+  "score_threshold": 0.3,
+  "nms_threshold": 0.3,
+  "byte_order": "little",
+  "array_order": "C",
+  "expected_keep": [
+    388
+  ]
+}
