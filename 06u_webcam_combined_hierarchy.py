@@ -2,7 +2,10 @@ import os
 import importlib.util
 
 import cv2
-import mediapipe as mp
+try:
+    import mediapipe as mp
+except ModuleNotFoundError:
+    mp = None
 import numpy as np
 
 import hand_features as hf
@@ -794,6 +797,11 @@ def local_last40_score(
 # ============================================================
 
 def capture_sequence():
+    if mp is None:
+        raise RuntimeError(
+            "웹캠 캡처에는 mediapipe가 필요합니다. "
+            "C++ JSONL 오프라인 입력에는 필요하지 않습니다."
+        )
 
     mp_hands = (
         mp.solutions.hands

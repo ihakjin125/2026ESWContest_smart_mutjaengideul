@@ -2,7 +2,10 @@ import os
 import sys
 
 import cv2
-import mediapipe as mp
+try:
+    import mediapipe as mp
+except ModuleNotFoundError:
+    mp = None
 import numpy as np
 
 import hand_features as hf
