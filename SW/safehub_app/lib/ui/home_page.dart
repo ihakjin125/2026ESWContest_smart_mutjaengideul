@@ -12,7 +12,9 @@ import '../mqtt/mqtt_receiver.dart';
 import '../services/audio_service.dart';
 import '../services/camera_stream_service.dart';
 import '../services/disaster_service.dart';
+import '../services/stt_service.dart';
 import '../services/tts_service.dart';
+import '../services/voice_recorder_service.dart';
 import 'utils/disaster_display.dart';
 import 'widgets/disaster_overlay.dart';
 
@@ -38,6 +40,8 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   late final MqttReceiver _mqttReceiver;
   late final AnimationController _alertPulseController;
   late final TtsService _ttsService;
+  late final SttService _sttService;
+  final VoiceRecorderService _voiceRecorderService = VoiceRecorderService();
   final CameraStreamService _cameraStreamService = CameraStreamService();
 
   Timer? _disasterTimer;
@@ -48,6 +52,10 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   String _connectionStatus = '연결 중';
   String _signText = '수어 인식 대기 중';
   String _ttsStatus = '음성 안내 대기';
+  String _sttText = '음성 인식 대기 중';
+  String _sttStatus = '마이크 대기';
+  bool _sttRecording = false;
+  bool _sttBusy = false;
 
   static const int _cameraWidth = 320;
   static const int _cameraHeight = 240;
@@ -73,6 +81,10 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
 
     _ttsService = TtsService(
       baseUrl: AppConfig.ttsServerUrl,
+    );
+
+    _sttService = SttService(
+      baseUrl: AppConfig.sttServerUrl,
     );
 
     _mqttReceiver = MqttReceiver(
@@ -330,6 +342,98 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     }
   }
 
+  Future<void> _toggleSttRecording() async {
+    if (_sttBusy || _alertCoordinator.hasActiveAlert) {
+      return;
+    }
+
+    if (AppConfig.sttServerUrl.trim().isEmpty) {
+      setState(() {
+        _sttStatus = 'STT 서버 미설정';
+      });
+      return;
+    }
+
+    if (!_sttRecording) {
+      try {
+        await _audioService.stop();
+        await _voiceRecorderService.start();
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _sttRecording = true;
+          _sttStatus = '음성을 듣고 있습니다';
+        });
+      } catch (_) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _sttRecording = false;
+          _sttStatus = '마이크 시작 실패';
+        });
+      }
+
+      return;
+    }
+
+    setState(() {
+      _sttRecording = false;
+      _sttBusy = true;
+      _sttStatus = '음성을 글자로 변환 중';
+    });
+
+    try {
+      final audioBytes = await _voiceRecorderService.stopAndRead();
+      final result = await _sttService.transcribe(audioBytes);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _sttText = result;
+        _sttStatus = '음성 인식 완료';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _sttStatus = '음성 인식 실패';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sttBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _cancelSttRecording() async {
+    if (!_sttRecording) {
+      return;
+    }
+
+    await _voiceRecorderService.cancel();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _sttRecording = false;
+      _sttBusy = false;
+      _sttStatus = '안전 경보로 녹음 중단';
+    });
+  }
+
   void _handleEvent(Map<String, dynamic> event) {
     if (!mounted) {
       print('[UI] event ignored because widget is not mounted');
@@ -401,6 +505,7 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   void _interruptNormalSpeech() {
     _speechGeneration++;
     unawaited(_audioService.stop());
+    unawaited(_cancelSttRecording());
 
     if (mounted) {
       setState(() {
@@ -460,6 +565,8 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     _disasterTimer?.cancel();
     _speechGeneration++;
     _ttsService.dispose();
+    _sttService.dispose();
+    unawaited(_voiceRecorderService.dispose());
     unawaited(_audioService.dispose());
     unawaited(_cameraStreamService.dispose());
     _cameraImage?.dispose();
@@ -1135,16 +1242,101 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                  _heading(Icons.article_outlined, '수어 번역 결과'),
-                  const SizedBox(height: 28),
-                  Expanded(child: Center(child: _translationText(76))),
-                  const Divider(color: Color(0x33FFFFFF)),
+                  _heading(Icons.swap_horiz_rounded, '양방향 의사소통'),
                   const SizedBox(height: 20),
-                  _systemRow(Icons.volume_up_outlined, '음성 안내', _ttsStatus,
-                      _ttsStatus == '음성으로 전달됨' ? _green : _muted),
-                  const SizedBox(height: 20),
+                  Expanded(
+                      flex: 5,
+                      child: _glass(
+                          inset: true,
+                          padding: const EdgeInsets.all(22),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(children: [
+                                  const Icon(Icons.sign_language_outlined,
+                                      color: _blue, size: 23),
+                                  const SizedBox(width: 10),
+                                  _text('수어 → 음성',
+                                      size: 18, weight: FontWeight.w600),
+                                  const Spacer(),
+                                  _dot(
+                                      _ttsStatus,
+                                      _ttsStatus == '음성으로 전달됨'
+                                          ? _green
+                                          : _muted),
+                                ]),
+                                const SizedBox(height: 14),
+                                Expanded(
+                                    child: Center(child: _translationText(54))),
+                              ]))),
+                  const SizedBox(height: 18),
+                  Expanded(flex: 4, child: _sttPanel()),
                 ]))),
       ]);
+
+  Widget _sttPanel() {
+    final statusColor = _sttRecording
+        ? const Color(0xFFFF9A93)
+        : _sttBusy
+            ? _amber
+            : _sttStatus == '음성 인식 완료'
+                ? _green
+                : _muted;
+
+    final buttonLabel = _sttBusy
+        ? '음성 변환 중'
+        : _sttRecording
+            ? '녹음 종료 및 변환'
+            : '음성 녹음 시작';
+
+    final buttonIcon = _sttBusy
+        ? Icons.hourglass_top_rounded
+        : _sttRecording
+            ? Icons.stop_circle_outlined
+            : Icons.mic_none_rounded;
+
+    return _glass(
+        inset: true,
+        padding: const EdgeInsets.all(22),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Icon(Icons.record_voice_over_outlined,
+                color: statusColor, size: 23),
+            const SizedBox(width: 10),
+            _text('음성 → 텍스트', size: 18, weight: FontWeight.w600),
+            const Spacer(),
+            _dot(_sttStatus, statusColor),
+          ]),
+          const SizedBox(height: 12),
+          Expanded(
+              child: Center(
+                  child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: Text(
+              _sttText,
+              key: ValueKey(_sttText),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _sttText == '음성 인식 대기 중' ? _muted : _ink,
+                fontSize: _sttText == '음성 인식 대기 중' ? 22 : 34,
+                height: 1.3,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.5,
+              ),
+            ),
+          ))),
+          const SizedBox(height: 12),
+          _action(
+            buttonLabel,
+            buttonIcon,
+            _sttBusy ? () {} : () => unawaited(_toggleSttRecording()),
+            primary: !_sttBusy,
+          ),
+        ]));
+  }
 
   Widget _buildFallOverlay(Map<String, dynamic> event) {
     final eventName = _getEventName(event);
