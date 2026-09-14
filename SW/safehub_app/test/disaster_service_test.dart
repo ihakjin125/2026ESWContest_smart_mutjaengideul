@@ -2,6 +2,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:safehub_app/services/disaster_service.dart';
 
 void main() {
+  group('DisasterService.identifierOf', () {
+    test('숫자 SN을 문자열 식별자로 변환한다', () {
+      expect(
+        DisasterService.identifierOf({'SN': 301}),
+        '301',
+      );
+    });
+
+    test('문자열 SN 앞뒤 공백을 제거한다', () {
+      expect(
+        DisasterService.identifierOf({'SN': ' 302 '}),
+        '302',
+      );
+    });
+
+    test('SN이 없거나 비어 있으면 null을 반환한다', () {
+      expect(DisasterService.identifierOf({}), isNull);
+      expect(DisasterService.identifierOf({'SN': '  '}), isNull);
+    });
+  });
+
   group('DisasterService.selectLatest', () {
     test('응답이 오래된 순서여도 가장 최신 CRT_DT를 선택한다', () {
       final latest = DisasterService.selectLatest([
