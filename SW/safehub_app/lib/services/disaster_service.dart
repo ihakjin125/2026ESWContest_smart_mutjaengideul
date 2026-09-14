@@ -7,56 +7,76 @@ import '../config/app_config.dart';
 class DisasterService {
   static const int _rowsPerPage = 20;
 
-  int? _lastPage;
-
   Future<Map<String, dynamic>?> fetchLatest() async {
-    // 처음 한 번만 전체 개수를 확인해 마지막 페이지를 계산
-    if (_lastPage == null) {
-      final firstResponse = await _request(pageNo: 1);
+    final firstResponse = await _request(pageNo: 1);
+    final candidates = <dynamic>[
+      ..._extractBody(firstResponse),
+    ];
 
-      final totalCount = firstResponse['totalCount'];
+    final totalCount = _parseNumber(firstResponse['totalCount']);
+    final lastPage = totalCount <= 0 ? 1 : (totalCount / _rowsPerPage).ceil();
 
-      if (totalCount is! int || totalCount <= 0) {
-        return null;
-      }
-
-      _lastPage = (totalCount / _rowsPerPage).ceil();
+    // API 정렬 방향이 바뀌어도 대응하도록 첫 페이지와 마지막 페이지를 비교한다.
+    if (lastPage > 1) {
+      final lastResponse = await _request(pageNo: lastPage);
+      candidates.addAll(_extractBody(lastResponse));
     }
 
-    var response = await _request(
-      pageNo: _lastPage!,
-    );
+    return selectLatest(candidates);
+  }
 
-    final totalCount = response['totalCount'];
-
-    if (totalCount is! int || totalCount <= 0) {
-      return null;
-    }
-
-    // 조회 중 새 재난문자가 추가돼 마지막 페이지가 바뀐 경우 대응
-    final newLastPage = (totalCount / _rowsPerPage).ceil();
-
-    if (newLastPage != _lastPage) {
-      _lastPage = newLastPage;
-
-      response = await _request(
-        pageNo: _lastPage!,
-      );
-    }
-
+  static List<dynamic> _extractBody(Map<String, dynamic> response) {
     final body = response['body'];
 
-    if (body is! List || body.isEmpty) {
-      return null;
+    if (body is! List) {
+      return const [];
     }
 
-    final latest = body.last;
+    return body;
+  }
 
-    if (latest is! Map<String, dynamic>) {
-      return null;
+  static Map<String, dynamic>? selectLatest(List<dynamic> items) {
+    Map<String, dynamic>? latest;
+
+    for (final item in items) {
+      if (item is! Map) {
+        continue;
+      }
+
+      final candidate = Map<String, dynamic>.from(item);
+
+      if (latest == null || _compareDisasters(candidate, latest) > 0) {
+        latest = candidate;
+      }
     }
 
-    return Map<String, dynamic>.from(latest);
+    return latest;
+  }
+
+  static int _compareDisasters(
+    Map<String, dynamic> left,
+    Map<String, dynamic> right,
+  ) {
+    final dateComparison =
+        _dateKey(left['CRT_DT']).compareTo(_dateKey(right['CRT_DT']));
+
+    if (dateComparison != 0) {
+      return dateComparison;
+    }
+
+    return _parseNumber(left['SN']).compareTo(_parseNumber(right['SN']));
+  }
+
+  static String _dateKey(dynamic value) {
+    return value?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+  }
+
+  static int _parseNumber(dynamic value) {
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(value?.toString().trim() ?? '') ?? -1;
   }
 
   Future<Map<String, dynamic>> _request({
