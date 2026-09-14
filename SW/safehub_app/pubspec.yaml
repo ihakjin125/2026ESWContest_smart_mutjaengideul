@@ -11,7 +11,7 @@ dependencies:
   audioplayers_atlas:
     path: /opt/flutter-atlas-plugins/packages/flutter-plugin-atlas-audioplayers
   record_atlas:
-    path: /opt/flutter-atlas-plugins/packages/flutter-plugin-atlas-record
+    path: third_party/record_atlas
   flutter:
     sdk: flutter
 

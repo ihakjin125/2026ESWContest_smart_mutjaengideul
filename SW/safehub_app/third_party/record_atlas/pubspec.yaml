@@ -1,0 +1,28 @@
+name: record_atlas
+description: Linux specific implementation for record package called by record_platform_interface.
+version: 1.2.0
+homepage: https://github.com/llfbandit/record/tree/master/record_linux
+
+environment:
+  sdk: ">=2.18.0 <4.0.0"
+  flutter: ">=3.7.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  record_platform_interface: ^1.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^5.0.0
+
+# The following section is specific to Flutter.
+flutter:
+  plugin:
+    implements: record
+    platforms:
+      atlas:
+        dartPluginClass: RecordAtlas

@@ -378,8 +378,8 @@ packages:
   record_atlas:
     dependency: "direct main"
     description:
-      path: "/opt/flutter-atlas-plugins/packages/flutter-plugin-atlas-record"
-      relative: false
+      path: "third_party/record_atlas"
+      relative: true
     source: path
     version: "1.2.0"
   record_ios:
