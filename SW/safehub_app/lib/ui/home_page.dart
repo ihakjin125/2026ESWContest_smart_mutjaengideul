@@ -367,14 +367,17 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
           _sttRecording = true;
           _sttStatus = '음성을 듣고 있습니다';
         });
-      } catch (_) {
+      } catch (error, stackTrace) {
+        debugPrint('[STT 녹음 시작 실패] $error');
+        debugPrintStack(stackTrace: stackTrace);
+
         if (!mounted) {
           return;
         }
 
         setState(() {
           _sttRecording = false;
-          _sttStatus = '마이크 시작 실패';
+          _sttStatus = '마이크 시작 실패: $error';
         });
       }
 
