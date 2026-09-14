@@ -11,6 +11,8 @@ class AppConfig {
 
   static const String ttsServerUrl = String.fromEnvironment('TTS_SERVER_URL');
 
+  static const String sttServerUrl = String.fromEnvironment('STT_SERVER_URL');
+
   static const String cameraHost = String.fromEnvironment('CAMERA_HOST');
 
   static const int cameraPort =
