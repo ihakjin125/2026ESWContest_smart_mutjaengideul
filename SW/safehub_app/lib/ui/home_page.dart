@@ -57,7 +57,7 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
 
   Map<String, dynamic>? _latestDisaster;
 
-  int? _lastDisasterSn;
+  String? _lastDisasterId;
   int _speechGeneration = 0;
 
   final List<Map<String, dynamic>> _recentEvents = [];
@@ -164,13 +164,13 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
         return;
       }
 
-      final sn = disaster['SN'];
+      final disasterId = DisasterService.identifierOf(disaster);
 
-      if (sn is! int || _lastDisasterSn == sn) {
+      if (disasterId == null || _lastDisasterId == disasterId) {
         return;
       }
 
-      final isInitialLoad = _lastDisasterSn == null;
+      final isInitialLoad = _lastDisasterId == null;
       final disasterData = Map<String, dynamic>.from(disaster);
       final severity = getDisasterSeverity(disasterData);
 
@@ -187,7 +187,7 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
       }
 
       setState(() {
-        _lastDisasterSn = sn;
+        _lastDisasterId = disasterId;
         _latestDisaster = disasterData;
       });
 

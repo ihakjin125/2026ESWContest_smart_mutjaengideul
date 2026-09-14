@@ -35,6 +35,17 @@ class DisasterService {
     return body;
   }
 
+  static String? identifierOf(Map<String, dynamic> disaster) {
+    final value = disaster['SN'];
+
+    if (value == null) {
+      return null;
+    }
+
+    final identifier = value.toString().trim();
+    return identifier.isEmpty ? null : identifier;
+  }
+
   static Map<String, dynamic>? selectLatest(List<dynamic> items) {
     Map<String, dynamic>? latest;
 
