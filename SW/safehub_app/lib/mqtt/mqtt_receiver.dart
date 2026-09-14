@@ -4,6 +4,7 @@ import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 
 import '../core/event_manager.dart';
+import '../core/safety_event_normalizer.dart';
 
 class MqttReceiver {
   final String broker;
@@ -155,32 +156,19 @@ class MqttReceiver {
         return;
       }
 
-      // CSI 안전 이벤트가 아니면 무시
-      if (topic != 'safehub/csi/bedroom/event' &&
-          topic != 'safehub/csi/bathroom/event') {
+      final event = SafetyEventNormalizer.normalize(
+        decoded: decoded,
+        topic: topic,
+      );
+
+      if (event == null) {
+        print(
+          '[MQTT] ignored invalid safety event '
+          'topic=$topic payload=$payload',
+        );
         return;
       }
 
-      if (decoded is! Map<String, dynamic>) {
-        return;
-      }
-
-      final event = Map<String, dynamic>.from(decoded);
-
-      final eventType = event['event'];
-
-      // event 필드가 없거나 문자열이 아니면 무시
-      if (eventType is! String || eventType.isEmpty) {
-        return;
-      }
-
-      if (topic == 'safehub/csi/bedroom/event') {
-        event['location'] = 'bedroom';
-      } else {
-        event['location'] = 'bathroom';
-      }
-
-      // priority 검증은 EventManager가 담당
       eventManager.addEvent(event);
 
       print(
