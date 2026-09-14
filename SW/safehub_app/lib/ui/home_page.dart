@@ -332,8 +332,14 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
 
   void _handleEvent(Map<String, dynamic> event) {
     if (!mounted) {
+      print('[UI] event ignored because widget is not mounted');
       return;
     }
+
+    print(
+      '[UI] event received event=${event['event']} '
+      'location=${event['location']} priority=${event['priority']}',
+    );
 
     final eventData = Map<String, dynamic>.from(event);
     eventData['_receivedAt'] ??= DateTime.now().toIso8601String();
@@ -341,13 +347,21 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     var activated = false;
 
     if (_isEmergencyEvent(eventData)) {
+      final priority = _getEventPriority(eventData);
+
       activated = _alertCoordinator.submit(
         SafeHubAlert(
           kind: AlertKind.fall,
-          priority: _getEventPriority(eventData),
+          priority: priority,
           data: eventData,
         ),
       );
+
+      print(
+        '[ALERT] fall submitted activated=$activated priority=$priority',
+      );
+    } else {
+      print('[ALERT] non-emergency event added to recent events only');
     }
 
     setState(() {
@@ -362,8 +376,11 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     });
 
     if (activated) {
+      print('[UI] emergency overlay activated');
       _interruptNormalSpeech();
       _restartAlertPulse();
+    } else {
+      print('[UI] event stored without replacing active overlay');
     }
   }
 
