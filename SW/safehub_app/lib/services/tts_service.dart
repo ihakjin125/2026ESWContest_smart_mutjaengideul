@@ -5,10 +5,12 @@ import 'package:http/http.dart' as http;
 
 class TtsService {
   final String baseUrl;
+  final http.Client _client;
 
-  const TtsService({
+  TtsService({
     required this.baseUrl,
-  });
+    http.Client? client,
+  }) : _client = client ?? http.Client();
 
   Future<Uint8List> synthesize(String text) async {
     final cleanText = text.trim();
@@ -17,9 +19,15 @@ class TtsService {
       throw ArgumentError('TTS text는 비어 있을 수 없습니다.');
     }
 
-    final uri = Uri.parse('$baseUrl/tts');
+    final cleanBaseUrl = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
 
-    final response = await http
+    if (cleanBaseUrl.isEmpty) {
+      throw StateError('TTS 서버 URL이 설정되지 않았습니다.');
+    }
+
+    final uri = Uri.parse('$cleanBaseUrl/tts');
+
+    final response = await _client
         .post(
           uri,
           headers: {
@@ -44,5 +52,9 @@ class TtsService {
     }
 
     return response.bodyBytes;
+  }
+
+  void dispose() {
+    _client.close();
   }
 }

@@ -459,6 +459,7 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   void dispose() {
     _disasterTimer?.cancel();
     _speechGeneration++;
+    _ttsService.dispose();
     unawaited(_audioService.dispose());
     unawaited(_cameraStreamService.dispose());
     _cameraImage?.dispose();
