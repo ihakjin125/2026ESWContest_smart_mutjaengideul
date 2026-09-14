@@ -85,9 +85,8 @@ class DisasterService {
 
     final responseText = utf8.decode(response.bodyBytes);
 
-    print('[재난 API URL] $uri');
+    print('[재난 API] request page=$pageNo');
     print('[재난 API STATUS] ${response.statusCode}');
-    print('[재난 API RAW] $responseText');
 
     final decoded = jsonDecode(responseText);
 
