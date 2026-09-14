@@ -31,9 +31,13 @@ class MqttReceiver {
   });
 
   Future<void> connect() async {
+    final clientId = 'safehub_rpi5_${DateTime.now().millisecondsSinceEpoch}';
+
+    print('[MQTT] connecting broker=$broker port=$port client=$clientId');
+
     _client = MqttServerClient.withPort(
       broker,
-      'safehub_rpi5',
+      clientId,
       port,
     );
 
@@ -46,23 +50,40 @@ class MqttReceiver {
     _client.resubscribeOnAutoReconnect = true;
 
     _client.onConnected = () {
+      print('[MQTT] connected broker=$broker port=$port');
       onConnectionChanged?.call(true);
     };
 
+    _client.onDisconnected = () {
+      print('[MQTT] disconnected state=${_client.connectionStatus?.state}');
+      onConnectionChanged?.call(false);
+    };
+
+    _client.onSubscribed = (topic) {
+      print('[MQTT] subscribed topic=$topic');
+    };
+
+    _client.onSubscribeFail = (topic) {
+      print('[MQTT] subscribe failed topic=$topic');
+    };
+
     _client.onAutoReconnect = () {
+      print('[MQTT] auto reconnecting');
       onConnectionChanged?.call(false);
     };
 
     _client.onAutoReconnected = () {
+      print('[MQTT] auto reconnected');
       onConnectionChanged?.call(true);
     };
 
     _client.connectionMessage =
-        MqttConnectMessage().withClientIdentifier('safehub_rpi5').startClean();
+        MqttConnectMessage().withClientIdentifier(clientId).startClean();
 
     try {
       await _client.connect();
     } catch (e) {
+      print('[MQTT] connection failed: $e');
       _client.disconnect();
       rethrow;
     }
@@ -114,6 +135,8 @@ class MqttReceiver {
         message.payload.message,
       );
 
+      print('[MQTT] received topic=$topic bytes=${payload.length}');
+
       final decoded = jsonDecode(payload);
 
       // 수어 번역 결과
@@ -160,9 +183,14 @@ class MqttReceiver {
       // priority 검증은 EventManager가 담당
       eventManager.addEvent(event);
 
+      print(
+        '[MQTT] event queued event=${event['event']} '
+        'location=${event['location']} priority=${event['priority']}',
+      );
+
       onEventReceived?.call(event);
     } catch (e) {
-      print('MQTT 메시지 처리 실패: $e');
+      print('[MQTT] message handling failed: $e');
     }
   }
 
