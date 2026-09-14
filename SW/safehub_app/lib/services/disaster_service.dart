@@ -83,9 +83,13 @@ class DisasterService {
       );
     }
 
-    final decoded = jsonDecode(
-      utf8.decode(response.bodyBytes),
-    );
+    final responseText = utf8.decode(response.bodyBytes);
+
+    print('[재난 API URL] $uri');
+    print('[재난 API STATUS] ${response.statusCode}');
+    print('[재난 API RAW] $responseText');
+
+    final decoded = jsonDecode(responseText);
 
     if (decoded is! Map<String, dynamic>) {
       throw Exception('재난 API 응답 형식 오류');

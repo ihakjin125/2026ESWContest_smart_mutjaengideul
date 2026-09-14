@@ -11,6 +11,11 @@ class AppConfig {
 
   static const String ttsServerUrl = String.fromEnvironment('TTS_SERVER_URL');
 
+  static const String cameraHost = String.fromEnvironment('CAMERA_HOST');
+
+  static const int cameraPort =
+      int.fromEnvironment('CAMERA_PORT', defaultValue: 5000);
+
   static void validate() {
     if (mqttBroker.isEmpty) {
       throw StateError(

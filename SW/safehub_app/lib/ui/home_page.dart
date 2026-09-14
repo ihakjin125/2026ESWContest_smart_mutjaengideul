@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -8,9 +10,9 @@ import '../core/alert_coordinator.dart';
 import '../core/event_manager.dart';
 import '../mqtt/mqtt_receiver.dart';
 import '../services/audio_service.dart';
+import '../services/camera_stream_service.dart';
 import '../services/disaster_service.dart';
 import '../services/tts_service.dart';
-import 'theme/app_theme.dart';
 import 'utils/disaster_display.dart';
 import 'widgets/disaster_overlay.dart';
 
@@ -36,6 +38,7 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   late final MqttReceiver _mqttReceiver;
   late final AnimationController _alertPulseController;
   late final TtsService _ttsService;
+  final CameraStreamService _cameraStreamService = CameraStreamService();
 
   Timer? _disasterTimer;
 
@@ -45,6 +48,12 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   String _connectionStatus = '연결 중';
   String _signText = '수어 인식 대기 중';
   String _ttsStatus = '음성 안내 대기';
+
+  static const int _cameraWidth = 320;
+  static const int _cameraHeight = 240;
+
+  ui.Image? _cameraImage;
+  bool _cameraConnected = false;
 
   Map<String, dynamic>? _latestDisaster;
 
@@ -76,7 +85,64 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     );
 
     _connectMqtt();
+    _connectCamera();
     _startDisasterPolling();
+  }
+
+  void _connectCamera() {
+    unawaited(
+      _cameraStreamService.connect(
+        host: AppConfig.cameraHost,
+        port: AppConfig.cameraPort,
+        onFrame: _handleCameraFrame,
+        onConnectionChanged: (connected) {
+          if (!mounted) {
+            return;
+          }
+
+          final previousImage = connected ? null : _cameraImage;
+
+          setState(() {
+            _cameraConnected = connected;
+
+            if (!connected) {
+              _cameraImage = null;
+            }
+          });
+
+          previousImage?.dispose();
+        },
+      ),
+    );
+  }
+
+  void _handleCameraFrame(Uint8List frame) {
+    const expectedBytes = _cameraWidth * _cameraHeight * 4;
+
+    if (frame.lengthInBytes != expectedBytes) {
+      return;
+    }
+
+    ui.decodeImageFromPixels(
+      frame,
+      _cameraWidth,
+      _cameraHeight,
+      ui.PixelFormat.rgba8888,
+      (image) {
+        if (!mounted) {
+          image.dispose();
+          return;
+        }
+
+        final previousImage = _cameraImage;
+
+        setState(() {
+          _cameraImage = image;
+        });
+
+        previousImage?.dispose();
+      },
+    );
   }
 
   void _startDisasterPolling() {
@@ -129,7 +195,9 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
         _interruptNormalSpeech();
         _restartAlertPulse();
       }
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[재난 API 실패] $e');
+      debugPrint('$st');
       // 재난 API 실패 시 다른 SafeHub 기능은 계속 동작한다.
     }
   }
@@ -375,6 +443,9 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     _disasterTimer?.cancel();
     _speechGeneration++;
     unawaited(_audioService.dispose());
+    unawaited(_cameraStreamService.dispose());
+    _cameraImage?.dispose();
+    _cameraImage = null;
     _alertPulseController.dispose();
     _mqttReceiver.disconnect();
     super.dispose();
@@ -681,16 +752,75 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   Widget _cameraPlaceholder() => Container(
         width: double.infinity,
         decoration: BoxDecoration(
-            color: const Color(0x88202020),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0x24FFFFFF))),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Icon(Icons.sign_language_outlined, size: 66, color: _blue),
-          const SizedBox(height: 14),
-          _text('수어로 전하는 일상', size: 23, weight: FontWeight.w600),
-          const SizedBox(height: 8),
-          _text('카메라 미리보기 미연동', size: 15, color: _muted),
-        ]),
+          color: const Color(0x88202020),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: const Color(0x24FFFFFF)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: _cameraImage == null
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.videocam_outlined,
+                    size: 66,
+                    color: _blue,
+                  ),
+                  const SizedBox(height: 14),
+                  _text(
+                    '수어 카메라',
+                    size: 23,
+                    weight: FontWeight.w600,
+                  ),
+                  const SizedBox(height: 8),
+                  _text(
+                    _cameraConnected ? '카메라 영상 수신 대기 중' : 'RPi4 카메라 연결 대기 중',
+                    size: 15,
+                    color: _muted,
+                  ),
+                ],
+              )
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  RawImage(
+                    image: _cameraImage,
+                    fit: BoxFit.cover,
+                    filterQuality: FilterQuality.low,
+                  ),
+                  Positioned(
+                    top: 12,
+                    left: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xAA111111),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.circle,
+                            size: 9,
+                            color: _cameraConnected ? _green : _amber,
+                          ),
+                          const SizedBox(width: 7),
+                          _text(
+                            _cameraConnected ? 'LIVE' : '연결 확인',
+                            size: 13,
+                            color: _ink,
+                            weight: FontWeight.w600,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
       );
 
   Widget _translationText(double size) => AnimatedSwitcher(
@@ -1003,128 +1133,221 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     final locationName = _getLocationName(event);
     final detectedAt = _formatEventDateTime(event);
     final priority = _getEventPriority(event);
+    const accent = Color(0xFFFFA49A);
 
+    // Presentation only: preserve the existing alert acknowledgement lifecycle.
     return Positioned.fill(
-      child: AnimatedBuilder(
-        animation: _alertPulseController,
-        builder: (context, child) {
-          return Container(
-            color: Color.lerp(
-              const Color(0xFFFFF3F3),
-              const Color(0xFFF3B2B2),
-              _alertPulseController.value * 0.72,
-            ),
-            child: child,
-          );
-        },
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 64,
-              vertical: 42,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Text(
-                      'SafeHub',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
+      child: BlockSemantics(
+        child: Material(
+          color: const Color(0xFF24221F),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                'assets/images/safehub_living_room.png',
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) =>
+                    const ColoredBox(color: Color(0xFF393731)),
+              ),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xD923201E), Color(0xC43A2220)],
+                  ),
+                ),
+              ),
+              SafeArea(
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final compact =
+                      constraints.maxWidth < 700 || constraints.maxHeight < 650;
+                  final padding = compact ? 20.0 : 40.0;
+                  return SingleChildScrollView(
+                    padding: EdgeInsets.all(padding),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight:
+                            math.max(0.0, constraints.maxHeight - padding * 2),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Wrap(
+                            alignment: WrapAlignment.spaceBetween,
+                            spacing: 20,
+                            runSpacing: 12,
+                            children: [
+                              _text('SafeHub',
+                                  size: 26, weight: FontWeight.w600),
+                              _dot('긴급 안전 알림', accent),
+                            ],
+                          ),
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                                vertical: compact ? 24 : 40),
+                            child: Center(
+                              child: ConstrainedBox(
+                                constraints:
+                                    const BoxConstraints(maxWidth: 1040),
+                                child: AnimatedBuilder(
+                                  animation: _alertPulseController,
+                                  builder: (context, child) {
+                                    final pulse =
+                                        MediaQuery.of(context).disableAnimations
+                                            ? 0.0
+                                            : _alertPulseController.value;
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(22),
+                                        border: Border.all(
+                                          width: 2,
+                                          color: Color.lerp(
+                                              const Color(0x667F514A),
+                                              const Color(0xD9E58A7D),
+                                              pulse)!,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Color.fromARGB(
+                                                (18 + 20 * pulse).round(),
+                                                220,
+                                                82,
+                                                64),
+                                            blurRadius: 30,
+                                            spreadRadius: 2,
+                                          ),
+                                        ],
+                                      ),
+                                      child: child,
+                                    );
+                                  },
+                                  child: _glass(
+                                    padding: EdgeInsets.all(compact ? 24 : 48),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        const Icon(Icons.warning_amber_rounded,
+                                            size: 72, color: accent),
+                                        const SizedBox(height: 24),
+                                        Semantics(
+                                          liveRegion: true,
+                                          child: Text(
+                                            eventName == '낙상 감지'
+                                                ? '낙상이 감지되었습니다'
+                                                : eventName,
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontFamily: 'Pretendard',
+                                              fontSize: compact ? 32 : 50,
+                                              height: 1.25,
+                                              fontWeight: FontWeight.w600,
+                                              color: _ink,
+                                              letterSpacing: -1,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        const Text(
+                                          '즉시 주변 상황을 확인해 주세요.',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              color: _muted,
+                                              fontSize: 22,
+                                              height: 1.4),
+                                        ),
+                                        const SizedBox(height: 30),
+                                        _glass(
+                                          inset: true,
+                                          child: Column(
+                                            children: [
+                                              Text(locationName,
+                                                  textAlign: TextAlign.center,
+                                                  style: const TextStyle(
+                                                      color: _ink,
+                                                      fontSize: 32,
+                                                      fontWeight:
+                                                          FontWeight.w600)),
+                                              const SizedBox(height: 10),
+                                              Text('$detectedAt 감지',
+                                                  textAlign: TextAlign.center,
+                                                  style: const TextStyle(
+                                                      color: _muted,
+                                                      fontSize: 18)),
+                                              const SizedBox(height: 10),
+                                              Text('긴급도 $priority / 10',
+                                                  style: const TextStyle(
+                                                      color: accent,
+                                                      fontSize: 18,
+                                                      fontWeight:
+                                                          FontWeight.w600)),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 30),
+                                        Center(
+                                          child: ConstrainedBox(
+                                            constraints: const BoxConstraints(
+                                                maxWidth: 400),
+                                            child: SizedBox(
+                                              width: double.infinity,
+                                              child: FilledButton.icon(
+                                                onPressed:
+                                                    _acknowledgeActiveAlert,
+                                                icon: const Icon(
+                                                    Icons.check_rounded),
+                                                label: const Text('경보 확인'),
+                                                style: FilledButton.styleFrom(
+                                                  backgroundColor:
+                                                      const Color(0xFFAD443B),
+                                                  foregroundColor: Colors.white,
+                                                  minimumSize:
+                                                      const Size(0, 64),
+                                                  padding:
+                                                      const EdgeInsets.all(18),
+                                                  textStyle: const TextStyle(
+                                                      fontFamily: 'Pretendard',
+                                                      fontSize: 22,
+                                                      fontWeight:
+                                                          FontWeight.w600),
+                                                  shape: RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              14)),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 14),
+                                        const Text(
+                                          '경보 확인은 안전 확인 완료를 의미하지 않습니다.',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              color: _muted,
+                                              fontSize: 15,
+                                              height: 1.4),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const Text('SafeHub · 공간 안전 모니터링',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: _muted, fontSize: 15)),
+                        ],
                       ),
                     ),
-                    Spacer(),
-                    Text(
-                      '긴급 안전 알림',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.danger,
-                      ),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                AnimatedBuilder(
-                  animation: _alertPulseController,
-                  builder: (context, child) {
-                    return Transform.scale(
-                      scale: 1.0 + (_alertPulseController.value * 0.14),
-                      child: child,
-                    );
-                  },
-                  child: const Icon(
-                    Icons.warning_amber_rounded,
-                    size: 82,
-                    color: AppColors.danger,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                Text(
-                  eventName == '낙상 감지' ? '낙상이 감지되었습니다' : eventName,
-                  style: const TextStyle(
-                    fontSize: 60,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                    letterSpacing: -1.4,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  locationName,
-                  style: const TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  '$detectedAt 감지  ·  긴급도 $priority',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 22),
-                const Text(
-                  '즉시 주변 상황을 확인해 주세요.',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const Spacer(),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _acknowledgeActiveAlert,
-                    child: Container(
-                      width: 220,
-                      height: 54,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: AppColors.danger,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        '확인했습니다',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+                  );
+                }),
+              ),
+            ],
           ),
         ),
       ),
