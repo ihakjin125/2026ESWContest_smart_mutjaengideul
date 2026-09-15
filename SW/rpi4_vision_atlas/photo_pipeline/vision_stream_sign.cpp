@@ -4,10 +4,51 @@
 
 #include <chrono>
 
+#include "vision_frame_hands.hpp"
+#include "runtime_data.hpp"
+#include "sign_runtime.hpp"
+#include "raw_tcp_streamer.hpp"
+
 namespace {
 
 constexpr int kPalmInterval = 10;
 constexpr float kBorderMargin = 8.0f;
+
+
+sign_engine::VisionFrameDetections to_vision_detections(
+    const std::vector<Hand>& hands
+) {
+    sign_engine::VisionFrameDetections detections;
+
+    detections.reserve(
+        hands.size()
+    );
+
+    for (const Hand& hand : hands) {
+        sign_engine::VisionHandDetection detection{};
+
+        detection.handedness_raw =
+            hand.handedness;
+
+        detection.confidence =
+            hand.confidence;
+
+        for (std::size_t i = 0; i < 21; ++i) {
+            detection.landmarks.points[i].x =
+                hand.xy[i].x;
+
+            detection.landmarks.points[i].y =
+                hand.xy[i].y;
+        }
+
+        detections.push_back(
+            detection
+        );
+    }
+
+    return detections;
+}
+
 
 Palm tracked_palm_from_hand(const Hand& hand_result) {
     Palm tracked{};
@@ -166,9 +207,9 @@ void write_overlay_ppm(const fs::path& path,
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 6) {
+        if (argc != 7) {
             throw std::runtime_error(
-                "Usage: vision_stream WIDTH HEIGHT MODEL_DIR OUTPUT_JSONL MAX_FRAMES"
+                "Usage: vision_stream_sign WIDTH HEIGHT MODEL_DIR OUTPUT_JSONL MAX_FRAMES RUNTIME_DATA_DIR"
             );
         }
         const int width = std::stoi(argv[1]);
@@ -176,6 +217,7 @@ int main(int argc, char** argv) {
         const fs::path models = argv[3];
         const fs::path output_path = argv[4];
         const size_t max_frames = static_cast<size_t>(std::stoul(argv[5]));
+        const std::string runtime_data_dir = argv[6];
         if (width <= 0 || height <= 0 || max_frames == 0) {
             throw std::runtime_error("Invalid stream arguments");
         }
@@ -201,9 +243,29 @@ int main(int argc, char** argv) {
             224
         );
 
+        const sign_engine::RuntimeData runtime =
+            sign_engine::loadRuntimeData(
+                runtime_data_dir
+            );
+
+        sign_engine::validateRuntimeData(
+            runtime
+        );
+
+        std::cout
+            << "Runtime data validated: "
+            << runtime_data_dir
+            << '\n';
+
         std::ofstream jsonl(output_path);
         if (!jsonl) {
             throw std::runtime_error("Could not create output JSONL");
+        }
+
+        RawTcpStreamer camera_streamer(5000);
+        if (!camera_streamer.start()) {
+            std::cerr
+                << "[camera stream] disabled; sign recognition continues\n";
         }
 
         cv::Mat frame(height, width, CV_8UC3);
@@ -214,6 +276,9 @@ int main(int argc, char** argv) {
         size_t detected_frames = 0;
         size_t palm_frames = 0;
         double processing_ms_sum = 0.0;
+
+        sign_engine::VisionRecordingDetections vision_recording;
+        vision_recording.reserve(max_frames);
 
         while (processed_frames < max_frames) {
             const size_t bytes = frame.total() * frame.elemSize();
@@ -226,6 +291,8 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("Partial raw frame received");
             }
             cv::flip(frame, frame, 1);
+
+            camera_streamer.sendFrame(frame);
 
             const auto start = std::chrono::steady_clock::now();
             bool used_palm_detector = force_detection ||
@@ -260,6 +327,10 @@ int main(int argc, char** argv) {
                 ++detected_frames;
             }
 
+            vision_recording.push_back(
+                to_vision_detections(hands)
+            );
+
             const auto end = std::chrono::steady_clock::now();
             const double processing_ms =
                 std::chrono::duration<double, std::milli>(end - start).count();
@@ -275,6 +346,65 @@ int main(int argc, char** argv) {
             );
             ++processed_frames;
         }
+
+        const sign_engine::VisionRecordingResult direct_recording =
+            sign_engine::buildRecordingFramesFromVision(
+                vision_recording
+            );
+
+        std::cout
+            << "Direct input frames: "
+            << direct_recording.input_frame_count
+            << '\n'
+            << "Direct adapter frames: "
+            << direct_recording.frames.size()
+            << '\n'
+            << "Direct maximum hands: "
+            << direct_recording.maximum_hands_per_frame
+            << '\n'
+            << "Direct single stabilize: "
+            << (
+                direct_recording.used_single_hand_stabilization
+                    ? "true"
+                    : "false"
+            )
+            << '\n';
+
+        const sign_engine::SignRecognitionResult sign_result =
+            sign_engine::classifyRecording(
+                direct_recording.frames,
+                runtime
+            );
+
+        std::cout
+            << "========================================\n"
+            << "DIRECT SIGN CLASSIFIER RESULT\n"
+            << "========================================\n"
+            << "valid           : "
+            << (sign_result.valid ? "true" : "false")
+            << '\n'
+            << "final_id        : "
+            << sign_result.final_id
+            << '\n'
+            << "stage           : "
+            << sign_result.stage
+            << '\n'
+            << "is_nosign       : "
+            << (sign_result.is_nosign ? "true" : "false")
+            << '\n'
+            << "source_mode     : "
+            << sign_result.source_mode
+            << '\n'
+            << "selected_frames : "
+            << sign_result.selected_frames
+            << '\n'
+            << "both_ratio      : "
+            << sign_result.recording_stats.both_ratio
+            << '\n'
+            << "error           : "
+            << sign_result.error
+            << '\n'
+            << "========================================\n";
 
         write_overlay_ppm(
             output_path.string() + ".last.ppm",

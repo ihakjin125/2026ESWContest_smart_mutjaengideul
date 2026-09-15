@@ -232,6 +232,7 @@ bool hand(const cv::Mat& image,const Palm& p,Model& model,Hand& result) {
     }
     return true;
 }
+#ifndef VISION_PHOTO_NO_MAIN
 int main(int argc,char** argv) {
     try {
         if(argc!=4) throw std::runtime_error("Usage: vision_photo IMAGE MODEL_DIR NEW_OUTPUT_DIR");
@@ -295,3 +296,4 @@ int main(int argc,char** argv) {
         return 0;
     } catch(const std::exception& e) {std::cerr<<"ERROR: "<<e.what()<<"\n";return 1;}
 }
+#endif  // VISION_PHOTO_NO_MAIN
