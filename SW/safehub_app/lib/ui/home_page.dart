@@ -646,8 +646,10 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
                 child: _currentPage == _SafeHubPage.home
                     ? _glassDashboard(activeAlert)
                     : _currentPage == _SafeHubPage.appliances
-                        ? AppliancePanel(controls: _appliances,
-                            connected: _mqttConnected, latestSign: _signText)
+                        ? AppliancePanel(
+                            controls: _appliances,
+                            connected: _mqttConnected,
+                            latestSign: _signText)
                         : _glassTranslation()),
           ]),
         )),
@@ -850,16 +852,17 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
       ]);
 
   Widget _signPanel() => _glass(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-    _heading(Icons.sign_language_outlined, '수어 · 의사소통'),
-    const SizedBox(height: 16),
-    Expanded(flex: 4, child: _cameraPlaceholder()),
-    const SizedBox(height: 16),
-    Expanded(flex: 4, child: _signResultCard()),
-    const SizedBox(height: 16),
-    _action('의사소통 화면 열기', Icons.arrow_forward_rounded,
-        _openSignTranslation, primary: true),
-  ]));
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _heading(Icons.sign_language_outlined, '수어 · 의사소통'),
+        const SizedBox(height: 16),
+        Expanded(flex: 4, child: _cameraPlaceholder()),
+        const SizedBox(height: 16),
+        Expanded(flex: 4, child: _signResultCard()),
+        const SizedBox(height: 16),
+        _action('의사소통 화면 열기', Icons.arrow_forward_rounded, _openSignTranslation,
+            primary: true),
+      ]));
 
   Widget _cameraPlaceholder() => Container(
         width: double.infinity,
@@ -980,7 +983,8 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
       if (_selectedRoom == 'all' || _selectedRoom == 'livingroom') ...[
         const SizedBox(height: 10),
         _action('가전 · 수어 단축키', Icons.tune_rounded,
-            () => setState(() => _currentPage = _SafeHubPage.appliances), primary: true),
+            () => setState(() => _currentPage = _SafeHubPage.appliances),
+            primary: true),
       ],
     ]));
   }
@@ -1204,57 +1208,77 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
   Widget _signResultCard() => Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-          color: const Color(0xFFF0F4F2),
-          borderRadius: BorderRadius.circular(20)),
+          gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF20383A), Color(0xFF172B30)]),
+          border: Border.all(color: const Color(0xFF496A67)),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x33000000), blurRadius: 18, offset: Offset(0, 8))
+          ]),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         const Row(children: [
-          Icon(Icons.sign_language_outlined, color: Color(0xFF356052), size: 24),
+          Icon(Icons.sign_language_outlined,
+              color: Color(0xFFA8DCCB), size: 24),
           SizedBox(width: 10),
-          Text('수어 인식 결과', style: TextStyle(
-              fontSize: 18, color: Color(0xFF356052), fontWeight: FontWeight.w600)),
+          Text('수어 인식 결과',
+              style: TextStyle(
+                  fontSize: 18,
+                  color: Color(0xFFA8DCCB),
+                  fontWeight: FontWeight.w700)),
         ]),
         const SizedBox(height: 16),
-        Expanded(child: SingleChildScrollView(child: Semantics(
+        Expanded(
+            child: SingleChildScrollView(
+                child: Semantics(
           liveRegion: true,
-          child: Text(_signText, style: TextStyle(
-              fontFamily: 'Pretendard',
-              fontSize: _signText == '수어 인식 대기 중' ? 26 : 38,
-              color: const Color(0xFF1F3030), height: 1.45,
-              fontWeight: FontWeight.w600)),
+          child: Text(_signText,
+              style: TextStyle(
+                  fontFamily: 'Pretendard',
+                  fontSize: _signText == '수어 인식 대기 중' ? 26 : 38,
+                  color: const Color(0xFFF5F8F7),
+                  height: 1.4,
+                  fontWeight: FontWeight.w700)),
         ))),
         const SizedBox(height: 12),
-        Text(_ttsStatus, style: const TextStyle(
-            color: Color(0xFF476257), fontSize: 16)),
+        Text(_ttsStatus,
+            style: const TextStyle(color: Color(0xFFB8CBC6), fontSize: 16)),
       ]));
 
   Widget _glassTranslation() => LayoutBuilder(builder: (context, bounds) {
-    final camera = _glass(child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      _heading(Icons.videocam_outlined, '수어 카메라'),
-      const SizedBox(height: 16),
-      Expanded(child: _cameraPlaceholder()),
-      const SizedBox(height: 16),
-      _text('카메라를 보며 수어를 표현하세요', size: 16, color: _muted),
-    ]));
-    if (bounds.maxWidth < 1000 || bounds.maxHeight < 480) {
-      return ListView(children: [
-        SizedBox(height: 280, child: camera),
-        const SizedBox(height: 16),
-        SizedBox(height: 260, child: _signResultCard()),
-        const SizedBox(height: 16),
-        SizedBox(height: 320, child: _sttPanel()),
-      ]);
-    }
-    return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Expanded(flex: 4, child: camera),
-      const SizedBox(width: 20),
-      Expanded(flex: 6, child: Column(children: [
-        Expanded(flex: 5, child: _signResultCard()),
-        const SizedBox(height: 20),
-        Expanded(flex: 5, child: _sttPanel()),
-      ])),
-    ]);
-  });
+        final camera = _glass(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+              _heading(Icons.videocam_outlined, '수어 카메라'),
+              const SizedBox(height: 16),
+              Expanded(child: _cameraPlaceholder()),
+              const SizedBox(height: 16),
+              _text('카메라를 보며 수어를 표현하세요', size: 16, color: _muted),
+            ]));
+        if (bounds.maxWidth < 1000 || bounds.maxHeight < 480) {
+          return ListView(children: [
+            SizedBox(height: 280, child: camera),
+            const SizedBox(height: 16),
+            SizedBox(height: 260, child: _signResultCard()),
+            const SizedBox(height: 16),
+            SizedBox(height: 320, child: _sttPanel()),
+          ]);
+        }
+        return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Expanded(flex: 4, child: camera),
+          const SizedBox(width: 20),
+          Expanded(
+              flex: 6,
+              child: Column(children: [
+                Expanded(flex: 5, child: _signResultCard()),
+                const SizedBox(height: 20),
+                Expanded(flex: 5, child: _sttPanel()),
+              ])),
+        ]);
+      });
 
   Widget _sttPanel() {
     final statusColor = _sttRecording
@@ -1286,9 +1310,12 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
             Icon(Icons.record_voice_over_outlined,
                 color: statusColor, size: 23),
             const SizedBox(width: 10),
-            Expanded(child: _text('음성 → 텍스트', size: 18, weight: FontWeight.w600)),
+            Expanded(
+                child: _text('음성 → 텍스트', size: 18, weight: FontWeight.w600)),
             const SizedBox(width: 12),
-            Flexible(child: _text(_sttStatus, size: 14, color: statusColor, lines: 2)),
+            Flexible(
+                child:
+                    _text(_sttStatus, size: 14, color: statusColor, lines: 2)),
           ]),
           const SizedBox(height: 12),
           Expanded(

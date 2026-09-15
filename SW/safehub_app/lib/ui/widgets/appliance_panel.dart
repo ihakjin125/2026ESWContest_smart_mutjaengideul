@@ -23,6 +23,9 @@ class AppliancePanel extends StatefulWidget {
 }
 
 class _AppliancePanelState extends State<AppliancePanel> {
+  static const _foreground = Color(0xFFF4F7F7);
+  static const _secondary = Color(0xFFB8C6CA);
+  static const _accent = Color(0xFFA8DCCB);
   final _sign = TextEditingController();
   String _device = 'aircon';
   String _action = 'toggle';
@@ -101,10 +104,14 @@ class _AppliancePanelState extends State<AppliancePanel> {
   Widget _card(Widget child) => Container(
         padding: const EdgeInsets.all(22),
         decoration: BoxDecoration(
-            color: const Color(0xFF242D33),
+            color: const Color(0xF21B272E),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF43515B))),
-        child: child,
+            border: Border.all(color: const Color(0xFF4B5D66))),
+        child: DefaultTextStyle.merge(
+          style: const TextStyle(
+              fontFamily: 'Pretendard', color: _foreground, height: 1.35),
+          child: child,
+        ),
       );
 
   String _actionLabel(String device, String action) => device == 'curtain'
@@ -131,17 +138,22 @@ class _AppliancePanelState extends State<AppliancePanel> {
                   ? Icons.lightbulb_outline
                   : Icons.curtains,
           size: 30,
-          color: const Color(0xFFBADBCF)),
+          color: _accent),
       const SizedBox(height: 12),
       Text('거실 $label',
-          style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w600)),
+          style: const TextStyle(
+              fontSize: 21, color: _foreground, fontWeight: FontWeight.w700)),
       const SizedBox(height: 10),
       Semantics(
           liveRegion: true,
-          child: Text(status, style: const TextStyle(fontSize: 23))),
+          child: Text(status,
+              style: const TextStyle(
+                  fontSize: 23,
+                  color: _foreground,
+                  fontWeight: FontWeight.w600))),
       const SizedBox(height: 8),
       Text(_preview ? '시뮬레이션 상태' : '최근 허브 명령 · 실제 기기 상태 아님',
-          style: const TextStyle(fontSize: 13, color: Color(0xFFB7C3CA))),
+          style: const TextStyle(fontSize: 14, color: _secondary)),
       const SizedBox(height: 16),
       Wrap(spacing: 8, runSpacing: 8, children: [
         for (final action in ['on', 'off'])
@@ -157,15 +169,46 @@ class _AppliancePanelState extends State<AppliancePanel> {
   @override
   Widget build(BuildContext context) {
     return Theme(
-      data: Theme.of(context).copyWith(
-          brightness: Brightness.dark,
+      data: ThemeData.dark().copyWith(
           colorScheme: const ColorScheme.dark(
-              primary: Color(0xFFBADBCF), surface: Color(0xFF242D33)),
-          textTheme: Theme.of(context).textTheme.apply(
-              bodyColor: const Color(0xFFF1F5F6),
-              displayColor: const Color(0xFFF1F5F6)),
-          inputDecorationTheme:
-              const InputDecorationTheme(border: OutlineInputBorder())),
+              primary: _accent,
+              onPrimary: Color(0xFF10231F),
+              surface: Color(0xFF1B272E),
+              onSurface: _foreground),
+          textTheme: ThemeData.dark().textTheme.apply(
+              fontFamily: 'Pretendard',
+              bodyColor: _foreground,
+              displayColor: _foreground),
+          listTileTheme: const ListTileThemeData(
+              textColor: _foreground, iconColor: _accent),
+          inputDecorationTheme: InputDecorationTheme(
+              filled: true,
+              fillColor: const Color(0xFF26343C),
+              labelStyle: const TextStyle(color: _secondary),
+              hintStyle: const TextStyle(color: Color(0xFF8FA0A6)),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFF60727A))),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: _accent, width: 2)),
+              disabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFF415159)))),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: _foreground,
+                  side: const BorderSide(color: Color(0xFF71838A)))),
+          textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(foregroundColor: _accent)),
+          filledButtonTheme: FilledButtonThemeData(
+              style: FilledButton.styleFrom(
+                  backgroundColor: _accent,
+                  foregroundColor: const Color(0xFF10231F))),
+          switchTheme: SwitchThemeData(
+              thumbColor: MaterialStateProperty.resolveWith(
+                  (states) => states.contains(MaterialState.selected) ? const Color(0xFF10231F) : _secondary),
+              trackColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.selected) ? _accent : const Color(0xFF53636A)))),
       child: SingleChildScrollView(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
