@@ -17,6 +17,8 @@ class MqttReceiver {
   // 수어 번역 결과 수신
   final void Function(String text)? onSignTextReceived;
 
+  final void Function(String topic, Map<String, dynamic> data)? onDeviceCommand;
+
   // MQTT 연결 상태 변경
   final void Function(bool connected)? onConnectionChanged;
 
@@ -28,6 +30,7 @@ class MqttReceiver {
     required this.eventManager,
     this.onEventReceived,
     this.onSignTextReceived,
+    this.onDeviceCommand,
     this.onConnectionChanged,
   });
 
@@ -113,17 +116,19 @@ class MqttReceiver {
     );
 
     _client.updates?.listen(_onMessage);
+    _client.subscribe('safehub/control/livingroom/aircon/command', MqttQos.atLeastOnce);
   }
 
   void _onMessage(
     List<MqttReceivedMessage<MqttMessage?>> messages,
   ) {
-    try {
-      if (messages.isEmpty) {
-        return;
-      }
+    for (final receivedMessage in messages) {
+      _handleMessage(receivedMessage);
+    }
+  }
 
-      final receivedMessage = messages.first;
+  void _handleMessage(MqttReceivedMessage<MqttMessage?> receivedMessage) {
+    try {
       final message = receivedMessage.payload;
 
       if (message is! MqttPublishMessage) {
@@ -139,6 +144,11 @@ class MqttReceiver {
       print('[MQTT] received topic=$topic bytes=${payload.length}');
 
       final decoded = jsonDecode(payload);
+
+      if (topic == 'safehub/control/livingroom/aircon/command') {
+        if (decoded is Map<String, dynamic>) onDeviceCommand?.call(topic, decoded);
+        return;
+      }
 
       // 수어 번역 결과
       if (topic == 'safehub/vision/livingroom/translation') {

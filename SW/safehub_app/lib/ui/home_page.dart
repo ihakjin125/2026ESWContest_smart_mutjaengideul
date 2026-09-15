@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
 import '../core/alert_coordinator.dart';
+import '../core/appliance_controls.dart';
 import '../core/event_manager.dart';
 import '../mqtt/mqtt_receiver.dart';
 import '../services/audio_service.dart';
@@ -17,10 +18,12 @@ import '../services/tts_service.dart';
 import '../services/voice_recorder_service.dart';
 import 'utils/disaster_display.dart';
 import 'widgets/disaster_overlay.dart';
+import 'widgets/appliance_panel.dart';
 
 enum _SafeHubPage {
   home,
   signTranslation,
+  appliances,
 }
 
 class SafeHubHomePage extends StatefulWidget {
@@ -33,6 +36,7 @@ class SafeHubHomePage extends StatefulWidget {
 class _SafeHubHomePageState extends State<SafeHubHomePage>
     with SingleTickerProviderStateMixin {
   final EventManager _eventManager = EventManager();
+  final ApplianceControls _appliances = ApplianceControls();
   final DisasterService _disasterService = DisasterService();
   final AlertCoordinator _alertCoordinator = AlertCoordinator();
   final AudioService _audioService = AudioService();
@@ -93,6 +97,9 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
       eventManager: _eventManager,
       onEventReceived: _handleEvent,
       onSignTextReceived: _handleSignText,
+      onDeviceCommand: (topic, data) {
+        if (mounted && _appliances.receiveCommand(topic, data)) setState(() {});
+      },
       onConnectionChanged: _handleConnectionChanged,
     );
 
@@ -638,7 +645,10 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
             Expanded(
                 child: _currentPage == _SafeHubPage.home
                     ? _glassDashboard(activeAlert)
-                    : _glassTranslation()),
+                    : _currentPage == _SafeHubPage.appliances
+                        ? AppliancePanel(controls: _appliances,
+                            connected: _mqttConnected, latestSign: _signText)
+                        : _glassTranslation()),
           ]),
         )),
         if (_detailTitle != null)
@@ -691,8 +701,8 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: inset
-                    ? const [Color(0x24FFFFFF), Color(0x10FFFFFF)]
-                    : const [Color(0xDB343432), Color(0xD0232423)]),
+                    ? const [Color(0xFF303C44), Color(0xFF2B353D)]
+                    : const [Color(0xF2253038), Color(0xF21C252D)]),
             borderRadius: BorderRadius.circular(inset ? 15 : 20),
             border: Border.all(
                 color:
@@ -839,43 +849,17 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
             ])),
       ]);
 
-  Widget _signPanel() {
-    final hasResult = _signText != '수어 인식 대기 중';
-    return _glass(
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      _heading(Icons.sign_language_outlined, '수어 인식'),
-      const SizedBox(height: 18),
-      Expanded(flex: 5, child: _cameraPlaceholder()),
-      const SizedBox(height: 18),
-      Expanded(
-          flex: 3,
-          child: _glass(
-              inset: true,
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _text('인식된 수어', size: 16, color: _muted),
-                    const SizedBox(height: 8),
-                    Expanded(
-                        child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: _translationText(hasResult ? 46 : 28))),
-                  ]))),
-      const SizedBox(height: 16),
-      Row(children: [
-        const Icon(Icons.volume_up_outlined, color: _muted, size: 21),
-        const SizedBox(width: 10),
-        Expanded(
-            child: _text(_ttsStatus,
-                size: 16, color: _ttsStatus == '음성으로 전달됨' ? _green : _muted)),
-      ]),
-      const SizedBox(height: 18),
-      _action('번역 화면 열기', Icons.arrow_forward_rounded, _openSignTranslation,
-          primary: true),
-    ]));
-  }
+  Widget _signPanel() => _glass(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    _heading(Icons.sign_language_outlined, '수어 · 의사소통'),
+    const SizedBox(height: 16),
+    Expanded(flex: 4, child: _cameraPlaceholder()),
+    const SizedBox(height: 16),
+    Expanded(flex: 4, child: _signResultCard()),
+    const SizedBox(height: 16),
+    _action('의사소통 화면 열기', Icons.arrow_forward_rounded,
+        _openSignTranslation, primary: true),
+  ]));
 
   Widget _cameraPlaceholder() => Container(
         width: double.infinity,
@@ -951,19 +935,6 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
               ),
       );
 
-  Widget _translationText(double size) => AnimatedSwitcher(
-      duration: const Duration(milliseconds: 250),
-      child: Text(_signText,
-          key: ValueKey(_signText),
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              fontSize: size,
-              color: _blue,
-              height: 1.2,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -1)));
-
   Widget _action(String label, IconData icon, VoidCallback onTap,
           {bool primary = false}) =>
       SizedBox(
@@ -1005,6 +976,11 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
         Expanded(
             child: _spaceRow(rooms[i].$1, rooms[i].$2, rooms[i].$3, alert)),
         if (i < rooms.length - 1) const SizedBox(height: 10),
+      ],
+      if (_selectedRoom == 'all' || _selectedRoom == 'livingroom') ...[
+        const SizedBox(height: 10),
+        _action('가전 · 수어 단축키', Icons.tune_rounded,
+            () => setState(() => _currentPage = _SafeHubPage.appliances), primary: true),
       ],
     ]));
   }
@@ -1225,57 +1201,60 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
     });
   }
 
-  Widget _glassTranslation() =>
-      Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Expanded(
-            flex: 4,
-            child: _glass(
-                child: Column(children: [
-              _heading(Icons.sign_language_outlined, '수어 인식'),
-              const SizedBox(height: 24),
-              Expanded(child: _cameraPlaceholder()),
-              const SizedBox(height: 22),
-              _dot(_mqttConnected ? 'MQTT 결과 수신 대기' : 'MQTT 연결 확인',
-                  _mqttConnected ? _green : _amber),
-            ]))),
-        const SizedBox(width: 24),
-        Expanded(
-            flex: 6,
-            child: _glass(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                  _heading(Icons.swap_horiz_rounded, '양방향 의사소통'),
-                  const SizedBox(height: 20),
-                  Expanded(
-                      flex: 5,
-                      child: _glass(
-                          inset: true,
-                          padding: const EdgeInsets.all(22),
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Row(children: [
-                                  const Icon(Icons.sign_language_outlined,
-                                      color: _blue, size: 23),
-                                  const SizedBox(width: 10),
-                                  _text('수어 → 음성',
-                                      size: 18, weight: FontWeight.w600),
-                                  const Spacer(),
-                                  _dot(
-                                      _ttsStatus,
-                                      _ttsStatus == '음성으로 전달됨'
-                                          ? _green
-                                          : _muted),
-                                ]),
-                                const SizedBox(height: 14),
-                                Expanded(
-                                    child: Center(child: _translationText(54))),
-                              ]))),
-                  const SizedBox(height: 18),
-                  Expanded(flex: 4, child: _sttPanel()),
-                ]))),
+  Widget _signResultCard() => Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+          color: const Color(0xFFF0F4F2),
+          borderRadius: BorderRadius.circular(20)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Row(children: [
+          Icon(Icons.sign_language_outlined, color: Color(0xFF356052), size: 24),
+          SizedBox(width: 10),
+          Text('수어 인식 결과', style: TextStyle(
+              fontSize: 18, color: Color(0xFF356052), fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 16),
+        Expanded(child: SingleChildScrollView(child: Semantics(
+          liveRegion: true,
+          child: Text(_signText, style: TextStyle(
+              fontFamily: 'Pretendard',
+              fontSize: _signText == '수어 인식 대기 중' ? 26 : 38,
+              color: const Color(0xFF1F3030), height: 1.45,
+              fontWeight: FontWeight.w600)),
+        ))),
+        const SizedBox(height: 12),
+        Text(_ttsStatus, style: const TextStyle(
+            color: Color(0xFF476257), fontSize: 16)),
+      ]));
+
+  Widget _glassTranslation() => LayoutBuilder(builder: (context, bounds) {
+    final camera = _glass(child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _heading(Icons.videocam_outlined, '수어 카메라'),
+      const SizedBox(height: 16),
+      Expanded(child: _cameraPlaceholder()),
+      const SizedBox(height: 16),
+      _text('카메라를 보며 수어를 표현하세요', size: 16, color: _muted),
+    ]));
+    if (bounds.maxWidth < 1000 || bounds.maxHeight < 480) {
+      return ListView(children: [
+        SizedBox(height: 280, child: camera),
+        const SizedBox(height: 16),
+        SizedBox(height: 260, child: _signResultCard()),
+        const SizedBox(height: 16),
+        SizedBox(height: 320, child: _sttPanel()),
       ]);
+    }
+    return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Expanded(flex: 4, child: camera),
+      const SizedBox(width: 20),
+      Expanded(flex: 6, child: Column(children: [
+        Expanded(flex: 5, child: _signResultCard()),
+        const SizedBox(height: 20),
+        Expanded(flex: 5, child: _sttPanel()),
+      ])),
+    ]);
+  });
 
   Widget _sttPanel() {
     final statusColor = _sttRecording
@@ -1307,9 +1286,9 @@ class _SafeHubHomePageState extends State<SafeHubHomePage>
             Icon(Icons.record_voice_over_outlined,
                 color: statusColor, size: 23),
             const SizedBox(width: 10),
-            _text('음성 → 텍스트', size: 18, weight: FontWeight.w600),
-            const Spacer(),
-            _dot(_sttStatus, statusColor),
+            Expanded(child: _text('음성 → 텍스트', size: 18, weight: FontWeight.w600)),
+            const SizedBox(width: 12),
+            Flexible(child: _text(_sttStatus, size: 14, color: statusColor, lines: 2)),
           ]),
           const SizedBox(height: 12),
           Expanded(
