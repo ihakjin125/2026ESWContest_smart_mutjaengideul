@@ -1,0 +1,28 @@
+{
+  "chip": "esp32c6",
+  "flash_size": "4MB",
+  "channel": 11,
+  "target_hz": 60,
+  "physical_hardware_validated": false,
+  "idf": "5.4.0",
+  "platform": "espressif32@6.10.0",
+  "gain_component": "0.1.5",
+  "receiver": {
+    "sha256": "3b53bfb3cbe9edab4a8bb880a007c8929f2f229254801f9b26ee1442da2a2efb",
+    "bytes": 900432,
+    "application_sha256": "6757f6309a6b1bcc0bf645b341479e58adfe6972610febb6df22ad024ced8604"
+  },
+  "transmitter": {
+    "sha256": "da6780f5f6d6e2179e573968cd10b7d2dfee48ac4def0413958d1b18d69845b2",
+    "bytes": 903568,
+    "application_sha256": "12de162f7fbfdc6e22378079766be131f801ac8889831c90d928af3a5a1966ad"
+  },
+  "sources": {
+    "CMakeLists.txt": "6a04ef678488d71959d58d998c54155d4526215158c7ef501f1b1e0b961e3329",
+    "platformio.ini": "2872084d9acdf92203dfffaeab020a4a564ec70a3486a112d389145ad89d8b48",
+    "sdkconfig.defaults": "86e041fc4506d3179e89b502d20c6c92c79c087e8b765528f198ed4a975e0e48",
+    "src\\CMakeLists.txt": "7b9f8236e5c9c1bfd6d46c6a69887829649be0146d7900bb39789d4ff27fe557",
+    "src\\idf_component.yml": "8dd9e9091089feb84b15317d26ac49ad8b4e0d2098f6c25b4e6234681e622e00",
+    "src\\main.c": "422f35ba7cbaa6c35a19c0f70027dca45a2ea33fb274ba863e1041a7be7879f1"
+  }
+}

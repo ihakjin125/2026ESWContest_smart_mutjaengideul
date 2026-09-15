@@ -1,0 +1,12 @@
+# Tested Windows Python 3.12 runtime; CPU-only PyTorch.
+--extra-index-url https://download.pytorch.org/whl/cpu
+numpy==2.3.5
+scipy==1.18.1
+scikit-learn==1.9.1
+PyWavelets==1.10.0
+PySide6==6.11.2
+pyqtgraph==0.14.0
+pyserial==3.5
+joblib==1.6.0
+torch==2.14.0+cpu
+esptool==4.8.1

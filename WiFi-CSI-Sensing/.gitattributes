@@ -1,0 +1,13 @@
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.spec text eol=lf
+*.c text eol=lf
+*.ini text eol=lf
+*.yml text eol=lf
+*.defaults text eol=lf
+CMakeLists.txt text eol=lf
+*.bin binary
+*.ico binary
+# Vendor RST headings and separators must stay distinct from merge markers.
+THIRD_PARTY_NOTICES.txt conflict-marker-size=128
