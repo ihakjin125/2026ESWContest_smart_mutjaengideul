@@ -1,0 +1,50 @@
+# Local Python and build artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+build/
+release/
+dist/
+test-results/
+.pio/
+managed_components/
+sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
+
+# This reviewed specification is source, not an auto-generated build output.
+!WifiSensing2.0.spec
+
+# Private measurements, models, journals and board backups
+data-v2/
+WifiSensing*-data/
+pi-records/
+board-backups/
+model/
+models/
+*.joblib
+*.npz
+*.npy
+*.csv
+*.jsonl
+*.log
+*.lock
+*.tmp
+*.bak
+.env
+.env.*
+
+# Distribute executables separately through Releases
+*.exe
+*.zip
+*.elf
+*.map
+*.bin
+!firmware-c6/bin/receiver.bin
+!firmware-c6/bin/transmitter.bin
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
