@@ -444,6 +444,11 @@ int main(int argc,char** argv) {
         sign_engine::VisionRecordingDetections
             recording;
 
+        // Keep only the most recent frames so long-running camera
+        // sessions do not grow recording memory without bound.
+        constexpr std::size_t kMaxRecordingFrames = 90;
+        std::size_t recording_evicted_frames = 0;
+
         std::size_t consumed_sequence = 0;
         std::size_t processed_frames = 0;
         std::size_t dropped_frames = 0;
@@ -603,6 +608,17 @@ int main(int argc,char** argv) {
                 ++frames_with_hands;
             }
 
+            if(
+                recording.size() >=
+                kMaxRecordingFrames
+            ) {
+                recording.erase(
+                    recording.begin()
+                );
+
+                ++recording_evicted_frames;
+            }
+
             recording.push_back(
                 std::move(frame_detections)
             );
@@ -750,6 +766,15 @@ int main(int argc,char** argv) {
 
             << "accepted_hands    : "
             << accepted_hands << "\n"
+
+            << "recording_cap     : "
+            << kMaxRecordingFrames << "\n"
+
+            << "recording_frames  : "
+            << recording.size() << "\n"
+
+            << "recording_evicted : "
+            << recording_evicted_frames << "\n"
 
             << "pipeline_ms       : "
             << pipeline_ms << "\n"
