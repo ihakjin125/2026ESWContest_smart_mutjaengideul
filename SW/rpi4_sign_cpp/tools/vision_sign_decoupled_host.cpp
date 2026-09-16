@@ -14,6 +14,10 @@
 #include <array>
 #include <cmath>
 #include <chrono>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -265,15 +269,27 @@ std::string className(int id) {
 
 int main(int argc,char** argv) {
     try {
-        if(argc != 4) {
+        if(argc != 4 && argc != 5) {
             throw std::runtime_error(
-                "Usage: vision_sign_host VIDEO MODEL_DIR RUNTIME_DATA_DIR"
+                "Usage: vision_sign_decoupled_host "
+                "VIDEO MODEL_DIR RUNTIME_DATA_DIR [PACE_FPS]"
             );
         }
 
         const fs::path video_path = argv[1];
         const fs::path models = argv[2];
         const std::string runtime_dir = argv[3];
+
+        const double pace_fps =
+            argc == 5
+                ? std::stod(argv[4])
+                : 0.0;
+
+        if(pace_fps < 0.0) {
+            throw std::runtime_error(
+                "PACE_FPS must be >= 0"
+            );
+        }
 
         cv::VideoCapture capture(
             video_path.string()
@@ -288,7 +304,7 @@ int main(int argc,char** argv) {
 
         Ort::Env env(
             ORT_LOGGING_LEVEL_WARNING,
-            "vision_sign"
+            "vision_sign_decoupled"
         );
 
         Ort::SessionOptions opts;
@@ -316,36 +332,214 @@ int main(int argc,char** argv) {
             224
         );
 
-        sign_engine::VisionRecordingDetections recording;
+        // =====================================================
+        // Latest-frame mailbox
+        // =====================================================
 
-        std::size_t decoded_frames = 0;
-        std::size_t frames_with_hands = 0;
-        std::size_t accepted_hands = 0;
+        std::mutex frame_mutex;
+        std::condition_variable frame_cv;
 
-        double vision_total_ms = 0.0;
+        std::shared_ptr<cv::Mat> latest_frame;
+
+        std::chrono::steady_clock::time_point
+            latest_capture_time{};
+
+        std::size_t latest_sequence = 0;
+        std::size_t captured_frames = 0;
+
+        bool capture_done = false;
+
+        std::string capture_error;
 
         const auto pipeline_begin =
             std::chrono::steady_clock::now();
 
-        cv::Mat frame;
+        std::thread capture_thread(
+            [&]() {
+                try {
+                    cv::Mat frame;
 
-        while(capture.read(frame)) {
+                    auto next_tick =
+                        std::chrono::steady_clock::now();
 
-            if(frame.empty()) {
-                continue;
+                    const auto pace_period =
+                        pace_fps > 0.0
+                            ? std::chrono::duration<double>(
+                                  1.0 / pace_fps
+                              )
+                            : std::chrono::duration<double>(
+                                  0.0
+                              );
+
+                    while(capture.read(frame)) {
+
+                        if(frame.empty()) {
+                            continue;
+                        }
+
+                        if(
+                            pace_fps > 0.0 &&
+                            captured_frames > 0
+                        ) {
+                            next_tick +=
+                                std::chrono::duration_cast<
+                                    std::chrono::steady_clock::duration
+                                >(pace_period);
+
+                            std::this_thread::sleep_until(
+                                next_tick
+                            );
+                        }
+                        else if(captured_frames == 0) {
+                            next_tick =
+                                std::chrono::steady_clock::now();
+                        }
+
+                        auto published =
+                            std::make_shared<cv::Mat>(
+                                frame.clone()
+                            );
+
+                        const auto capture_time =
+                            std::chrono::steady_clock::now();
+
+                        {
+                            std::lock_guard<std::mutex>
+                                lock(frame_mutex);
+
+                            latest_frame =
+                                std::move(published);
+
+                            latest_capture_time =
+                                capture_time;
+
+                            ++latest_sequence;
+                            ++captured_frames;
+                        }
+
+                        frame_cv.notify_one();
+                    }
+
+                    capture.release();
+                }
+                catch(const std::exception& e) {
+                    capture_error = e.what();
+                }
+
+                {
+                    std::lock_guard<std::mutex>
+                        lock(frame_mutex);
+
+                    capture_done = true;
+                }
+
+                frame_cv.notify_all();
+            }
+        );
+
+        // =====================================================
+        // Inference consumer
+        // =====================================================
+
+        sign_engine::VisionRecordingDetections
+            recording;
+
+        std::size_t consumed_sequence = 0;
+        std::size_t processed_frames = 0;
+        std::size_t dropped_frames = 0;
+        std::size_t frames_with_hands = 0;
+        std::size_t accepted_hands = 0;
+
+        double vision_total_ms = 0.0;
+        double frame_age_total_ms = 0.0;
+        double frame_age_max_ms = 0.0;
+
+        while(true) {
+
+            std::shared_ptr<cv::Mat> frame_ptr;
+
+            std::chrono::steady_clock::time_point
+                capture_time{};
+
+            std::size_t sequence = 0;
+
+            {
+                std::unique_lock<std::mutex>
+                    lock(frame_mutex);
+
+                frame_cv.wait(
+                    lock,
+                    [&]() {
+                        return
+                            capture_done ||
+                            latest_sequence >
+                                consumed_sequence;
+                    }
+                );
+
+                if(
+                    latest_sequence ==
+                        consumed_sequence &&
+                    capture_done
+                ) {
+                    break;
+                }
+
+                if(
+                    latest_sequence ==
+                        consumed_sequence
+                ) {
+                    continue;
+                }
+
+                sequence =
+                    latest_sequence;
+
+                frame_ptr =
+                    latest_frame;
+
+                capture_time =
+                    latest_capture_time;
             }
 
-            ++decoded_frames;
+            if(
+                sequence >
+                consumed_sequence + 1
+            ) {
+                dropped_frames +=
+                    sequence -
+                    consumed_sequence -
+                    1;
+            }
+
+            consumed_sequence =
+                sequence;
 
             const auto vision_begin =
                 std::chrono::steady_clock::now();
 
-            // Existing classifier/adapter contract:
-            // landmark coordinates are mirrored camera pixels.
+            const double frame_age_ms =
+                std::chrono::duration<
+                    double,
+                    std::milli
+                >(
+                    vision_begin -
+                    capture_time
+                ).count();
+
+            frame_age_total_ms +=
+                frame_age_ms;
+
+            frame_age_max_ms =
+                std::max(
+                    frame_age_max_ms,
+                    frame_age_ms
+                );
+
             cv::Mat mirrored;
 
             cv::flip(
-                frame,
+                *frame_ptr,
                 mirrored,
                 1
             );
@@ -359,14 +553,14 @@ int main(int argc,char** argv) {
             sign_engine::VisionFrameDetections
                 frame_detections;
 
-            for(const auto& p : selected) {
+            for(const auto& palm : selected) {
 
                 Hand h{};
 
                 if(
                     !hand(
                         mirrored,
-                        p,
+                        palm,
                         hand_model,
                         h
                     )
@@ -374,7 +568,8 @@ int main(int argc,char** argv) {
                     continue;
                 }
 
-                sign_engine::VisionHandDetection detection{};
+                sign_engine::VisionHandDetection
+                    detection{};
 
                 detection.handedness_raw =
                     h.handedness;
@@ -384,10 +579,16 @@ int main(int argc,char** argv) {
 
                 for(int i = 0; i < 21; ++i) {
 
-                    detection.landmarks.points[i].x =
+                    detection
+                        .landmarks
+                        .points[i]
+                        .x =
                         h.xy[i].x;
 
-                    detection.landmarks.points[i].y =
+                    detection
+                        .landmarks
+                        .points[i]
+                        .y =
                         h.xy[i].y;
                 }
 
@@ -406,38 +607,96 @@ int main(int argc,char** argv) {
                 std::move(frame_detections)
             );
 
+            ++processed_frames;
+
             const auto vision_end =
                 std::chrono::steady_clock::now();
 
             vision_total_ms +=
-                std::chrono::duration<double, std::milli>(
-                    vision_end - vision_begin
+                std::chrono::duration<
+                    double,
+                    std::milli
+                >(
+                    vision_end -
+                    vision_begin
                 ).count();
         }
 
-        capture.release();
+        capture_thread.join();
+
+        if(!capture_error.empty()) {
+            throw std::runtime_error(
+                "Capture thread: " +
+                capture_error
+            );
+        }
 
         const auto pipeline_end =
             std::chrono::steady_clock::now();
 
-        const double pipeline_ms =
-            std::chrono::duration<double, std::milli>(
-                pipeline_end - pipeline_begin
-            ).count();
-
-        if(decoded_frames == 0) {
+        if(captured_frames == 0) {
             throw std::runtime_error(
                 "Video contained no decoded frames"
             );
         }
 
+        const double pipeline_ms =
+            std::chrono::duration<
+                double,
+                std::milli
+            >(
+                pipeline_end -
+                pipeline_begin
+            ).count();
+
+        const double avg_vision_ms =
+            processed_frames > 0
+                ? vision_total_ms /
+                    processed_frames
+                : 0.0;
+
+        const double vision_fps =
+            vision_total_ms > 0.0
+                ? processed_frames *
+                    1000.0 /
+                    vision_total_ms
+                : 0.0;
+
+        const double pipeline_fps =
+            pipeline_ms > 0.0
+                ? processed_frames *
+                    1000.0 /
+                    pipeline_ms
+                : 0.0;
+
+        const double avg_frame_age_ms =
+            processed_frames > 0
+                ? frame_age_total_ms /
+                    processed_frames
+                : 0.0;
+
+        const double drop_ratio =
+            captured_frames > 0
+                ? static_cast<double>(
+                      dropped_frames
+                  ) /
+                  static_cast<double>(
+                      captured_frames
+                  )
+                : 0.0;
+
+        // =====================================================
+        // Adapter + classifier
+        // =====================================================
+
         const auto classify_begin =
             std::chrono::steady_clock::now();
 
         const auto adapted =
-            sign_engine::buildRecordingFramesFromVision(
-                recording
-            );
+            sign_engine::
+                buildRecordingFramesFromVision(
+                    recording
+                );
 
         const auto runtime =
             sign_engine::loadRuntimeData(
@@ -458,33 +717,33 @@ int main(int argc,char** argv) {
             std::chrono::steady_clock::now();
 
         const double classify_ms =
-            std::chrono::duration<double, std::milli>(
-                classify_end - classify_begin
+            std::chrono::duration<
+                double,
+                std::milli
+            >(
+                classify_end -
+                classify_begin
             ).count();
-
-        const double avg_vision_ms =
-            decoded_frames > 0
-                ? vision_total_ms / decoded_frames
-                : 0.0;
-
-        const double effective_vision_fps =
-            vision_total_ms > 0.0
-                ? decoded_frames * 1000.0 / vision_total_ms
-                : 0.0;
-
-        const double effective_pipeline_fps =
-            pipeline_ms > 0.0
-                ? decoded_frames * 1000.0 / pipeline_ms
-                : 0.0;
 
         std::cout
             << "\n========================================\n"
-            << "VISION + SIGN INTEGRATED RESULT\n"
-            << "========================================\n";
+            << "DECOUPLED CAMERA PIPELINE RESULT\n"
+            << "========================================\n"
 
-        std::cout
-            << "decoded_frames    : "
-            << decoded_frames << "\n"
+            << "pace_fps          : "
+            << pace_fps << "\n"
+
+            << "captured_frames   : "
+            << captured_frames << "\n"
+
+            << "processed_frames  : "
+            << processed_frames << "\n"
+
+            << "dropped_frames    : "
+            << dropped_frames << "\n"
+
+            << "drop_ratio        : "
+            << drop_ratio << "\n"
 
             << "frames_with_hands : "
             << frames_with_hands << "\n"
@@ -502,36 +761,44 @@ int main(int argc,char** argv) {
             << avg_vision_ms << "\n"
 
             << "vision_fps        : "
-            << effective_vision_fps << "\n"
+            << vision_fps << "\n"
 
             << "pipeline_fps      : "
-            << effective_pipeline_fps << "\n"
+            << pipeline_fps << "\n"
+
+            << "avg_frame_age_ms  : "
+            << avg_frame_age_ms << "\n"
+
+            << "max_frame_age_ms  : "
+            << frame_age_max_ms << "\n"
 
             << "classify_ms       : "
             << classify_ms << "\n"
 
             << "adapter_frames    : "
-            << adapted.frames.size() << "\n"
-
-            << "maximum_hands     : "
-            << adapted.maximum_hands_per_frame
+            << adapted.frames.size()
             << "\n";
 
         if(adapted.has_median_handedness) {
-
             std::cout
                 << "median_raw        : "
-                << adapted.median_handedness_raw
+                << adapted
+                       .median_handedness_raw
                 << "\n"
 
                 << "stabilized_hand   : "
-                << adapted.stabilized_physical_hand
+                << adapted
+                       .stabilized_physical_hand
                 << "\n";
         }
 
         std::cout
             << "\nvalid             : "
-            << (result.valid ? "true" : "false")
+            << (
+                result.valid
+                    ? "true"
+                    : "false"
+            )
             << "\n"
 
             << "final_id          : "
@@ -539,7 +806,9 @@ int main(int argc,char** argv) {
             << "\n"
 
             << "class             : "
-            << className(result.final_id)
+            << className(
+                result.final_id
+            )
             << "\n"
 
             << "stage             : "
@@ -547,7 +816,11 @@ int main(int argc,char** argv) {
             << "\n"
 
             << "is_nosign         : "
-            << (result.is_nosign ? "true" : "false")
+            << (
+                result.is_nosign
+                    ? "true"
+                    : "false"
+            )
             << "\n"
 
             << "source_mode       : "
@@ -558,51 +831,15 @@ int main(int argc,char** argv) {
             << result.selected_frames
             << "\n"
 
-            << "total_frames      : "
-            << result.recording_stats.total_frames
-            << "\n"
-
-            << "left_frames       : "
-            << result.recording_stats.left_count
-            << "\n"
-
-            << "right_frames      : "
-            << result.recording_stats.right_count
-            << "\n"
-
-            << "both_frames       : "
-            << result.recording_stats.both_count
-            << "\n"
-
-            << "both_ratio        : "
-            << result.recording_stats.both_ratio
-            << "\n"
-
             << "error             : "
             << result.error
             << "\n"
 
             << "========================================\n";
 
-        if(result.valid && !result.is_nosign) {
-            std::cout
-                << "\n>>> "
-                << className(result.final_id)
-                << "\n";
-        }
-        else if(result.valid && result.is_nosign) {
-            std::cout
-                << "\n>>> NO-SIGN\n";
-        }
-        else {
-            std::cout
-                << "\n>>> INVALID INPUT\n";
-        }
-
         return 0;
     }
     catch(const std::exception& e) {
-
         std::cerr
             << "ERROR: "
             << e.what()
