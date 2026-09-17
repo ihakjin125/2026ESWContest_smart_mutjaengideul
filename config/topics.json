@@ -1,0 +1,147 @@
+{
+  "version": "1.1",
+
+  "broker": {
+    "host": "raspberrypi5.local",
+    "port": 1883,
+    "note": "RPi5에서 Mosquitto Broker를 운영한다. 결선 환경에서는 RPi5 고정 IP 사용을 권장한다."
+  },
+
+  "topics": {
+    "vision_landmarks": {
+      "topic": "safehub/vision/livingroom/landmarks",
+      "qos": 0,
+      "retain": false,
+      "publisher": "RPi4",
+      "subscriber": "RPi5",
+      "description": "RPi4에서 OpenCV 및 MediaPipe Hands로 추출한 손 관절 데이터를 RPi5 GRU로 전달한다. 원본 영상은 전송하지 않는다.",
+
+      "payload_schema": {
+        "device": "string",
+        "event": "hand_landmarks",
+        "hands": [
+          {
+            "handedness": "LEFT | RIGHT",
+            "landmarks": "21개의 [x, y, z] float 좌표"
+          }
+        ]
+      }
+    },
+
+    "csi_bedroom_event": {
+      "topic": "safehub/csi/bedroom/event",
+      "qos": 1,
+      "retain": false,
+      "publisher": "ESP32_BEDROOM",
+      "subscriber": "RPi5",
+      "description": "침실 CSI 기반 이상행동 및 낙상 감지 이벤트",
+
+      "payload_schema": {
+        "message_id": "string(UUID)",
+        "device": "string",
+        "event": "string",
+        "confidence": "float (0~1)",
+        "priority": "integer (1~10)",
+        "timestamp": "integer (Unix timestamp)"
+      }
+    },
+
+    "csi_bathroom_event": {
+      "topic": "safehub/csi/bathroom/event",
+      "qos": 1,
+      "retain": false,
+      "publisher": "ESP32_BATHROOM",
+      "subscriber": "RPi5",
+      "description": "화장실 CSI 기반 이상행동 및 낙상 감지 이벤트",
+
+      "payload_schema": {
+        "message_id": "string(UUID)",
+        "device": "string",
+        "event": "string",
+        "confidence": "float (0~1)",
+        "priority": "integer (1~10)",
+        "timestamp": "integer (Unix timestamp)"
+      }
+    },
+
+    "actuator_led_command": {
+      "topic": "safehub/actuator/led/command",
+      "qos": 1,
+      "retain": false,
+      "publisher": "RPi5",
+      "subscriber": "ESP32",
+      "description": "비상 LED 제어 명령",
+
+      "payload_schema": {
+        "message_id": "string(UUID)",
+        "device": "rpi5_hub",
+        "event": "led_command",
+        "action": "string",
+        "timestamp": "integer (Unix timestamp)"
+      }
+    },
+
+    "actuator_bedshaker_command": {
+      "topic": "safehub/actuator/bedshaker/command",
+      "qos": 1,
+      "retain": false,
+      "publisher": "RPi5",
+      "subscriber": "ESP32",
+      "description": "베드셰이커 제어 명령",
+
+      "payload_schema": {
+        "message_id": "string(UUID)",
+        "device": "rpi5_hub",
+        "event": "bedshaker_command",
+        "action": "on | off",
+        "duration_sec": "integer",
+        "timestamp": "integer (Unix timestamp)"
+      }
+    },
+
+    "system_heartbeat": {
+      "topic": "safehub/system/heartbeat",
+      "qos": 0,
+      "retain": false,
+      "publisher": "RPi4 / RPi5 / ESP32",
+      "subscriber": "RPi5",
+      "description": "각 노드의 주기적인 생존 확인",
+
+      "payload_schema": {
+        "device": "string",
+        "event": "heartbeat",
+        "status": "online"
+      }
+    }
+  },
+
+  "mqtt_policy": {
+    "qos": {
+      "0": "연속적으로 갱신되어 일부 유실을 허용할 수 있는 데이터에 사용한다.",
+      "1": "낙상 이벤트 및 액추에이터 명령처럼 전달 보장이 필요한 메시지에 사용한다.",
+      "2": "사용하지 않는다."
+    },
+
+    "duplicate_handling": {
+      "description": "QoS 1 메시지는 message_id를 사용하여 RPi5 또는 수신 노드에서 중복 실행을 방지한다."
+    },
+
+    "retain": {
+      "policy": "현재 정의된 모든 Topic은 retain=false로 사용한다."
+    },
+
+    "priority": {
+      "range": "1~10",
+      "description": "MQTT 자체 기능이 아니라 RPi5 Event Manager에서 이벤트 처리 순서를 결정하기 위한 필드이다.",
+      "levels": {
+        "1-3": "일반",
+        "4-6": "중요",
+        "7-10": "긴급"
+      }
+    }
+  },
+
+  "architecture_note": "RPi4는 OpenCV 및 MediaPipe Hands를 수행하고 관절 데이터만 RPi5로 전송한다. RPi5는 GRU 추론, Event Manager, GUI, TTS, 재난 API를 담당한다. RPi5 내부 모듈 간 통신은 본 MQTT 장치 간 통신 규격에 포함하지 않는다.",
+
+  "change_policy": "Topic 이름, JSON Key, QoS, retain 및 데이터 타입 변경 시 팀 합의 후 version을 올린다."
+}
