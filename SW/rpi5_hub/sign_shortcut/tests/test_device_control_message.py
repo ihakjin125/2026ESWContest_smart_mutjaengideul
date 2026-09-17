@@ -1,7 +1,9 @@
 import json
 
-from core.action_executor import ActionResult
-from core.device_control_message import build_device_control_message
+from sign_shortcut.core.action_executor import ActionResult
+from sign_shortcut.core.device_control_message import (
+    build_device_control_message,
+)
 
 
 # 1. 에어컨 ON 제어 메시지 생성

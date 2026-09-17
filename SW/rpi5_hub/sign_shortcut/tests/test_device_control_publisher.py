@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 
-from core.device_control_message import DeviceControlMessage
-from device_control_publisher import DeviceControlPublisher
+from sign_shortcut.core.device_control_message import DeviceControlMessage
+from sign_shortcut.device_control_publisher import DeviceControlPublisher
 
 
 class FakePublishResult:

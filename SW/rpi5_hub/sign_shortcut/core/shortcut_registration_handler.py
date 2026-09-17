@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 
-from core.shortcut_manager import SignShortcut, ShortcutManager
+from .shortcut_manager import SignShortcut, ShortcutManager
 
 
 @dataclass(frozen=True)

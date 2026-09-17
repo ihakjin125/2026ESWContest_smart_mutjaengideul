@@ -2,10 +2,10 @@ import json
 
 import paho.mqtt.client as mqtt
 
-from core.action_executor import ActionExecutor
-from core.shortcut_manager import ShortcutManager
-from core.sign_shortcut_controller import SignShortcutController
-from device_control_publisher import DeviceControlPublisher
+from sign_shortcut.core.action_executor import ActionExecutor
+from sign_shortcut.core.shortcut_manager import ShortcutManager
+from sign_shortcut.core.sign_shortcut_controller import SignShortcutController
+from sign_shortcut.device_control_publisher import DeviceControlPublisher
 
 
 class FakePublishResult:

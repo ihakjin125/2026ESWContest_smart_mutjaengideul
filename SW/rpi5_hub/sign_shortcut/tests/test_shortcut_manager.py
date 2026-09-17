@@ -1,4 +1,4 @@
-from core.shortcut_manager import ShortcutManager
+from sign_shortcut.core.shortcut_manager import ShortcutManager
 
 
 manager = ShortcutManager()

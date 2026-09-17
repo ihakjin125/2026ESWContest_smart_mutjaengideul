@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from core.shortcut_manager import SignShortcut
+from .shortcut_manager import SignShortcut
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
-from core.shortcut_manager import ShortcutManager
-from core.shortcut_registration_handler import ShortcutRegistrationHandler
-
+from sign_shortcut.core.shortcut_manager import ShortcutManager
+from sign_shortcut.core.shortcut_registration_handler import (
+    ShortcutRegistrationHandler,
+)
 
 shortcut_manager = ShortcutManager()
 handler = ShortcutRegistrationHandler(shortcut_manager)

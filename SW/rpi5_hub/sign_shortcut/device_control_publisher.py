@@ -1,6 +1,6 @@
 import paho.mqtt.client as mqtt
 
-from core.device_control_message import DeviceControlMessage
+from .core.device_control_message import DeviceControlMessage
 
 
 class DeviceControlPublisher:

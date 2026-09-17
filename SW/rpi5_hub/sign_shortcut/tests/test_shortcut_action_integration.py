@@ -1,5 +1,5 @@
-from core.action_executor import ActionExecutor
-from core.shortcut_manager import ShortcutManager
+from sign_shortcut.core.action_executor import ActionExecutor
+from sign_shortcut.core.shortcut_manager import ShortcutManager
 
 
 shortcut_manager = ShortcutManager()

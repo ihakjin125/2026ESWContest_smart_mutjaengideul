@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 
-from core.action_executor import ActionResult
+from .action_executor import ActionResult
 
 
 @dataclass(frozen=True)
