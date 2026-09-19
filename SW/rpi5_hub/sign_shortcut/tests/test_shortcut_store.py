@@ -1,6 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from sign_shortcut.core.shortcut_manager import SignShortcut
 from sign_shortcut.core.shortcut_store import ShortcutStore
@@ -97,7 +98,9 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
     try:
         store.load()
-        raise AssertionError("잘못된 JSON이 허용되었습니다.")
+        raise AssertionError(
+            "잘못된 JSON이 허용되었습니다."
+        )
 
     except ValueError:
         pass
@@ -121,7 +124,9 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
     try:
         store.load()
-        raise AssertionError("JSON 객체가 최상위 데이터로 허용되었습니다.")
+        raise AssertionError(
+            "JSON 객체가 최상위 데이터로 허용되었습니다."
+        )
 
     except ValueError:
         pass
@@ -146,12 +151,75 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
     try:
         store.load()
-        raise AssertionError("필수 필드가 없는 단축키가 허용되었습니다.")
+        raise AssertionError(
+            "필수 필드가 없는 단축키가 허용되었습니다."
+        )
 
     except ValueError:
         pass
 
     print("PASS | 08 incomplete shortcut rejected")
+
+
+    # 9. 원자적 교체 실패 시 기존 정상 파일 유지
+    known_good_shortcuts = [
+        SignShortcut(
+            sign="에어컨",
+            room="livingroom",
+            device="aircon",
+            action="toggle",
+        )
+    ]
+
+    store.save(known_good_shortcuts)
+
+    original_content = store_path.read_text(
+        encoding="utf-8"
+    )
+
+    replacement_shortcuts = [
+        SignShortcut(
+            sign="점등",
+            room="livingroom",
+            device="light",
+            action="turn_on",
+        )
+    ]
+
+    with patch(
+        "sign_shortcut.core.shortcut_store.os.replace",
+        side_effect=OSError(
+            "simulated replace failure"
+        ),
+    ):
+        try:
+            store.save(replacement_shortcuts)
+
+            raise AssertionError(
+                "os.replace 실패가 허용되었습니다."
+            )
+
+        except ValueError:
+            pass
+
+    assert (
+        store_path.read_text(encoding="utf-8")
+        == original_content
+    )
+
+    assert store.load() == known_good_shortcuts
+
+    temp_files = list(
+        store_path.parent.glob(
+            f".{store_path.name}.*.tmp"
+        )
+    )
+
+    assert temp_files == []
+
+    print(
+        "PASS | 09 atomic save failure preserves existing data"
+    )
 
 
 print()

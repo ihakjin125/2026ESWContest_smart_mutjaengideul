@@ -1,13 +1,16 @@
-import json
+import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
 from core.event_manager import EventManager
-from sign_shortcut.core.action_executor import (
-    ActionExecutor,
-    ActionResult,
+from mqtt_receiver import (
+    MessageRouter,
+    configure_callbacks,
+    create_client,
 )
+from sign_shortcut.core.action_executor import ActionExecutor
 from sign_shortcut.core.shortcut_manager import ShortcutManager
 from sign_shortcut.core.shortcut_registration_handler import (
     ShortcutRegistrationHandler,
@@ -19,54 +22,141 @@ from sign_shortcut.core.sign_shortcut_controller import (
 from sign_shortcut.device_control_publisher import DeviceControlPublisher
 
 
-BROKER_HOST = "raspberrypi5.local"
-BROKER_PORT = 1883
+DEFAULT_BROKER_HOST = "raspberrypi5.local"
+DEFAULT_BROKER_PORT = 1883
+DEFAULT_KEEPALIVE = 60
+DEFAULT_SIGN_COOLDOWN_SEC = 2.5
 
-BEDROOM_TOPIC = "safehub/csi/bedroom/event"
-BATHROOM_TOPIC = "safehub/csi/bathroom/event"
-
-SIGN_TRANSLATION_TOPIC = "safehub/vision/livingroom/translation"
-
-# 현재 팀 통합용으로 사용하는 수어 단축키 등록/삭제 토픽
-SHORTCUT_COMMAND_TOPIC = "safehub/config/sign_shortcut/command"
-
-# 동일 수어가 연속 인식될 때 중복 실행을 방지하는 시간
-SIGN_COOLDOWN_SEC = 2.5
-
-SHORTCUT_STORE_PATH = (
+DEFAULT_SHORTCUT_STORE_PATH = (
     Path(__file__).resolve().parent
     / "sign_shortcut"
     / "shortcuts.json"
 )
 
 
-# 기존 CSI 이벤트 관리자
-event_manager = EventManager()
-
-# 수어 단축키 관련 구성 요소
-shortcut_manager = ShortcutManager()
-action_executor = ActionExecutor()
-shortcut_store = ShortcutStore(SHORTCUT_STORE_PATH)
-
-registration_handler = ShortcutRegistrationHandler(
-    shortcut_manager
-)
+@dataclass(frozen=True)
+class AppConfig:
+    broker_host: str
+    broker_port: int
+    keepalive: int
+    client_id: str | None
+    shortcut_store_path: Path
+    sign_cooldown_sec: float
 
 
-# MQTT Client 생성
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+@dataclass
+class Application:
+    config: AppConfig
+    event_manager: EventManager
+    shortcut_manager: ShortcutManager
+    shortcut_store: ShortcutStore
+    registration_handler: ShortcutRegistrationHandler
+    action_executor: ActionExecutor
+    client: mqtt.Client
+    device_control_publisher: DeviceControlPublisher
+    sign_shortcut_controller: SignShortcutController
+    router: MessageRouter
 
-device_control_publisher = DeviceControlPublisher(client)
 
-sign_shortcut_controller = SignShortcutController(
-    shortcut_manager=shortcut_manager,
-    action_executor=action_executor,
-    publisher=device_control_publisher,
-    cooldown_sec=SIGN_COOLDOWN_SEC,
-)
+def _read_positive_int(
+    env_name: str,
+    default: int,
+) -> int:
+    raw_value = os.getenv(env_name)
+
+    if raw_value is None:
+        return default
+
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ValueError(
+            f"{env_name}은 정수여야 합니다."
+        ) from error
+
+    if value <= 0:
+        raise ValueError(
+            f"{env_name}은 1 이상이어야 합니다."
+        )
+
+    return value
 
 
-def load_shortcuts() -> None:
+def _read_non_negative_float(
+    env_name: str,
+    default: float,
+) -> float:
+    raw_value = os.getenv(env_name)
+
+    if raw_value is None:
+        return default
+
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise ValueError(
+            f"{env_name}은 숫자여야 합니다."
+        ) from error
+
+    if value < 0:
+        raise ValueError(
+            f"{env_name}은 0 이상이어야 합니다."
+        )
+
+    return value
+
+
+def load_config() -> AppConfig:
+    broker_host = os.getenv(
+        "MQTT_BROKER_HOST",
+        DEFAULT_BROKER_HOST,
+    ).strip()
+
+    if not broker_host:
+        raise ValueError(
+            "MQTT_BROKER_HOST는 비어 있을 수 없습니다."
+        )
+
+    client_id = os.getenv(
+        "MQTT_CLIENT_ID",
+        "",
+    ).strip()
+
+    shortcut_store_value = os.getenv(
+        "SIGN_SHORTCUT_STORE_PATH",
+        str(DEFAULT_SHORTCUT_STORE_PATH),
+    ).strip()
+
+    if not shortcut_store_value:
+        raise ValueError(
+            "SIGN_SHORTCUT_STORE_PATH는 비어 있을 수 없습니다."
+        )
+
+    return AppConfig(
+        broker_host=broker_host,
+        broker_port=_read_positive_int(
+            "MQTT_BROKER_PORT",
+            DEFAULT_BROKER_PORT,
+        ),
+        keepalive=_read_positive_int(
+            "MQTT_KEEPALIVE",
+            DEFAULT_KEEPALIVE,
+        ),
+        client_id=client_id or None,
+        shortcut_store_path=Path(
+            shortcut_store_value
+        ),
+        sign_cooldown_sec=_read_non_negative_float(
+            "SIGN_COOLDOWN_SEC",
+            DEFAULT_SIGN_COOLDOWN_SEC,
+        ),
+    )
+
+
+def load_shortcuts(
+    shortcut_store: ShortcutStore,
+    shortcut_manager: ShortcutManager,
+) -> None:
     shortcuts = shortcut_store.load()
 
     for shortcut in shortcuts:
@@ -82,184 +172,112 @@ def load_shortcuts() -> None:
     )
 
 
-def publish_logical_state(result: ActionResult) -> None:
-    if not result.success or result.power_on is None:
-        return
+def build_application(
+    config: AppConfig | None = None,
+    client: mqtt.Client | None = None,
+) -> Application:
+    app_config = config or load_config()
 
-    # 현재 팀 통합용으로 제안된 논리적 상태 토픽.
-    # 실제 하드웨어 ACK가 아니라 RPi5가 요청한 목표 상태를 의미한다.
-    state_topic = (
-        f"safehub/state/{result.room}/{result.device}"
+    event_manager = EventManager()
+    shortcut_manager = ShortcutManager()
+    shortcut_store = ShortcutStore(
+        app_config.shortcut_store_path
     )
 
-    state_payload = json.dumps(
-        {
-            "source": "sign_shortcut",
-            "power_on": result.power_on,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
+    load_shortcuts(
+        shortcut_store=shortcut_store,
+        shortcut_manager=shortcut_manager,
     )
 
-    publish_result = client.publish(
-        topic=state_topic,
-        payload=state_payload,
-        qos=1,
-        retain=False,
+    mqtt_client = client or create_client(
+        client_id=app_config.client_id,
     )
 
-    if publish_result.rc != mqtt.MQTT_ERR_SUCCESS:
-        raise RuntimeError(
-            f"논리적 기기 상태 MQTT publish 실패: "
-            f"rc={publish_result.rc}"
-        )
+    action_executor = ActionExecutor()
 
+    device_control_publisher = DeviceControlPublisher(
+        mqtt_client
+    )
 
-def handle_csi_message(payload: str) -> None:
-    event = json.loads(payload)
+    sign_shortcut_controller = SignShortcutController(
+        shortcut_manager=shortcut_manager,
+        action_executor=action_executor,
+        publisher=device_control_publisher,
+        cooldown_sec=app_config.sign_cooldown_sec,
+    )
 
-    if not isinstance(event, dict):
-        raise ValueError(
-            "CSI 이벤트 메시지는 JSON 객체여야 합니다."
-        )
+    registration_handler = ShortcutRegistrationHandler(
+        shortcut_manager
+    )
 
-    event_manager.add_event(event)
+    router = MessageRouter(
+        event_manager=event_manager,
+        shortcut_manager=shortcut_manager,
+        registration_handler=registration_handler,
+        sign_shortcut_controller=sign_shortcut_controller,
+        shortcut_store=shortcut_store,
+    )
 
-    print(
-        f"수신: {event['event']} "
-        f"(priority={event['priority']})"
+    configure_callbacks(
+        client=mqtt_client,
+        router=router,
+    )
+
+    return Application(
+        config=app_config,
+        event_manager=event_manager,
+        shortcut_manager=shortcut_manager,
+        shortcut_store=shortcut_store,
+        registration_handler=registration_handler,
+        action_executor=action_executor,
+        client=mqtt_client,
+        device_control_publisher=device_control_publisher,
+        sign_shortcut_controller=sign_shortcut_controller,
+        router=router,
     )
 
 
-def handle_sign_message(payload: str) -> None:
-    data = json.loads(payload)
+def run() -> int:
+    application = None
 
-    if not isinstance(data, dict):
-        raise ValueError(
-            "수어 번역 메시지는 JSON 객체여야 합니다."
-        )
-
-    text = data.get("text")
-
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError(
-            "수어 번역 메시지에 유효한 text가 없습니다."
-        )
-
-    result = sign_shortcut_controller.handle_sign(text)
-
-    if result is None:
-        print(
-            f"등록된 단축키가 없거나 cooldown 중: "
-            f"{text.strip()}"
-        )
-        return
-
-    if result.success:
-        publish_logical_state(result)
-
-    print(result.message)
-
-
-def handle_shortcut_command(payload: str) -> None:
-    result = registration_handler.handle_payload(payload)
-
-    if result.success:
-        shortcut_store.save(
-            shortcut_manager.get_all()
-        )
-
-    print(result.message)
-
-
-def dispatch_message(
-    topic: str,
-    payload: str,
-) -> None:
-    if topic == BEDROOM_TOPIC:
-        handle_csi_message(payload)
-        return
-
-    if topic == BATHROOM_TOPIC:
-        handle_csi_message(payload)
-        return
-
-    if topic == SIGN_TRANSLATION_TOPIC:
-        handle_sign_message(payload)
-        return
-
-    if topic == SHORTCUT_COMMAND_TOPIC:
-        handle_shortcut_command(payload)
-        return
-
-    print(f"알 수 없는 MQTT 토픽: {topic}")
-
-
-def on_connect(
-    client,
-    userdata,
-    flags,
-    reason_code,
-    properties,
-):
-    if reason_code.is_failure:
-        print(f"MQTT 연결 실패: {reason_code}")
-        return
-
-    print("MQTT Broker 연결 성공")
-
-    # 재연결 시에도 필요한 모든 토픽을 다시 구독
-    client.subscribe(BEDROOM_TOPIC, qos=1)
-    client.subscribe(BATHROOM_TOPIC, qos=1)
-    client.subscribe(SIGN_TRANSLATION_TOPIC, qos=1)
-    client.subscribe(SHORTCUT_COMMAND_TOPIC, qos=1)
-
-
-def on_message(
-    client,
-    userdata,
-    msg,
-):
     try:
-        payload = msg.payload.decode("utf-8")
+        application = build_application()
 
-        dispatch_message(
-            topic=msg.topic,
-            payload=payload,
-        )
-
-    except (
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        KeyError,
-        ValueError,
-        RuntimeError,
-    ) as error:
         print(
-            f"잘못된 MQTT 메시지 "
-            f"(topic={msg.topic}): {error}"
+            "MQTT Broker 연결 시도: "
+            f"{application.config.broker_host}:"
+            f"{application.config.broker_port}"
         )
 
+        application.client.connect(
+            application.config.broker_host,
+            application.config.broker_port,
+            application.config.keepalive,
+        )
 
-def main() -> None:
-    load_shortcuts()
+        application.client.loop_forever()
 
-    client.on_connect = on_connect
-    client.on_message = on_message
+        return 0
 
-    client.connect(
-        BROKER_HOST,
-        BROKER_PORT,
-        60,
-    )
+    except KeyboardInterrupt:
+        print("사용자 요청으로 SafeHub RPi5 Hub를 종료합니다.")
+        return 0
 
-    print(
-        f"MQTT Broker 연결 시도: "
-        f"{BROKER_HOST}:{BROKER_PORT}"
-    )
+    except Exception as error:
+        print(
+            f"SafeHub RPi5 Hub 실행 오류: {error}"
+        )
+        return 1
 
-    client.loop_forever()
+    finally:
+        if application is not None:
+            try:
+                application.client.disconnect()
+            except Exception as error:
+                print(
+                    f"MQTT 연결 종료 중 오류: {error}"
+                )
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run())

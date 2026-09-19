@@ -251,3 +251,6 @@ SW/safehub_app/atlas/flutter/
 # OS / 에디터 관련 잡파일
 .DS_Store
 Thumbs.db
+
+# SafeHub local sign-shortcut user data
+SW/rpi5_hub/sign_shortcut/shortcuts.json

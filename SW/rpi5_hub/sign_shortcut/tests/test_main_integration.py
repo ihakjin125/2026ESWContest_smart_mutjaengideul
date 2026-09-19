@@ -1,22 +1,16 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import paho.mqtt.client as mqtt
 
 import main
-from core.event_manager import EventManager
-from sign_shortcut.core.action_executor import ActionExecutor
-from sign_shortcut.core.shortcut_manager import ShortcutManager
-from sign_shortcut.core.shortcut_registration_handler import (
-    ShortcutRegistrationHandler,
+from mqtt_receiver import (
+    BATHROOM_TOPIC,
+    BEDROOM_TOPIC,
+    SHORTCUT_COMMAND_TOPIC,
+    SIGN_TRANSLATION_TOPIC,
 )
-from sign_shortcut.core.shortcut_store import ShortcutStore
-from sign_shortcut.core.sign_shortcut_controller import (
-    SignShortcutController,
-)
-from sign_shortcut.device_control_publisher import DeviceControlPublisher
 
 
 class FakePublishResult:
@@ -26,18 +20,14 @@ class FakePublishResult:
 
 class FakeMqttClient:
     def __init__(self):
-        self.subscriptions = []
+        self.userdata = None
+        self.on_connect = None
+        self.on_message = None
+
         self.publishes = []
 
-    def subscribe(self, topic, qos):
-        self.subscriptions.append(
-            {
-                "topic": topic,
-                "qos": qos,
-            }
-        )
-
-        return (mqtt.MQTT_ERR_SUCCESS, len(self.subscriptions))
+    def user_data_set(self, userdata):
+        self.userdata = userdata
 
     def publish(
         self,
@@ -55,110 +45,39 @@ class FakeMqttClient:
             }
         )
 
-        return FakePublishResult(mqtt.MQTT_ERR_SUCCESS)
-
-
-class FakeReasonCode:
-    is_failure = False
-
-
-class FakeMessage:
-    def __init__(self, topic, payload):
-        self.topic = topic
-        self.payload = payload.encode("utf-8")
+        return FakePublishResult(
+            mqtt.MQTT_ERR_SUCCESS
+        )
 
 
 with tempfile.TemporaryDirectory() as temp_dir:
     store_path = Path(temp_dir) / "shortcuts.json"
 
+    config = main.AppConfig(
+        broker_host="test-broker.local",
+        broker_port=1883,
+        keepalive=60,
+        client_id="safehub-main-integration-test",
+        shortcut_store_path=store_path,
+        sign_cooldown_sec=0.0,
+    )
+
     fake_client = FakeMqttClient()
 
-    shortcut_manager = ShortcutManager()
-    action_executor = ActionExecutor()
-    shortcut_store = ShortcutStore(store_path)
-
-    registration_handler = ShortcutRegistrationHandler(
-        shortcut_manager
+    application = main.build_application(
+        config=config,
+        client=fake_client,
     )
 
-    device_control_publisher = DeviceControlPublisher(
-        fake_client
-    )
+    # 1. build_application이 Router와 MQTT callback을 연결
+    assert fake_client.userdata is application.router
+    assert fake_client.on_connect is not None
+    assert fake_client.on_message is not None
 
-    sign_shortcut_controller = SignShortcutController(
-        shortcut_manager=shortcut_manager,
-        action_executor=action_executor,
-        publisher=device_control_publisher,
-        cooldown_sec=2.5,
-    )
-
-    # main.py의 전역 구성 요소를 테스트용 객체로 교체
-    main.client = fake_client
-    main.event_manager = EventManager()
-    main.shortcut_manager = shortcut_manager
-    main.action_executor = action_executor
-    main.shortcut_store = shortcut_store
-    main.registration_handler = registration_handler
-    main.device_control_publisher = device_control_publisher
-    main.sign_shortcut_controller = sign_shortcut_controller
-
-    expected_topics = {
-        main.BEDROOM_TOPIC,
-        main.BATHROOM_TOPIC,
-        main.SIGN_TRANSLATION_TOPIC,
-        main.SHORTCUT_COMMAND_TOPIC,
-    }
+    print("PASS | 01 application router configured")
 
 
-    # 1. MQTT 최초 연결 시 필요한 4개 토픽 구독
-    main.on_connect(
-        fake_client,
-        None,
-        None,
-        FakeReasonCode(),
-        None,
-    )
-
-    first_subscriptions = fake_client.subscriptions[:4]
-
-    assert len(first_subscriptions) == 4
-    assert {
-        item["topic"]
-        for item in first_subscriptions
-    } == expected_topics
-    assert all(
-        item["qos"] == 1
-        for item in first_subscriptions
-    )
-
-    print("PASS | 01 all MQTT topics subscribed")
-
-
-    # 2. 재연결 시 동일한 4개 토픽 다시 구독
-    main.on_connect(
-        fake_client,
-        None,
-        None,
-        FakeReasonCode(),
-        None,
-    )
-
-    reconnect_subscriptions = fake_client.subscriptions[4:8]
-
-    assert len(reconnect_subscriptions) == 4
-    assert {
-        item["topic"]
-        for item in reconnect_subscriptions
-    } == expected_topics
-    assert all(
-        item["qos"] == 1
-        for item in reconnect_subscriptions
-    )
-
-    print("PASS | 02 MQTT reconnect resubscribes all topics")
-
-
-    # 3. 등록 MQTT 수신 -> 메모리 등록 + JSON 저장
+    # 2. 단축키 등록 -> ShortcutManager + JSON 저장
     register_payload = json.dumps(
         {
             "operation": "register",
@@ -168,25 +87,22 @@ with tempfile.TemporaryDirectory() as temp_dir:
             "action": "toggle",
         },
         ensure_ascii=False,
-    )
+    ).encode("utf-8")
 
-    register_message = FakeMessage(
-        main.SHORTCUT_COMMAND_TOPIC,
+    application.router.route(
+        SHORTCUT_COMMAND_TOPIC,
         register_payload,
     )
 
-    main.on_message(
-        fake_client,
-        None,
-        register_message,
+    registered = application.shortcut_manager.find_by_sign(
+        "에어컨"
     )
-
-    registered = shortcut_manager.find_by_sign("에어컨")
 
     assert registered is not None
     assert registered.room == "livingroom"
     assert registered.device == "aircon"
     assert registered.action == "toggle"
+
     assert store_path.exists()
 
     saved_data = json.loads(
@@ -202,132 +118,129 @@ with tempfile.TemporaryDirectory() as temp_dir:
         }
     ]
 
-    print("PASS | 03 registration MQTT saved shortcut JSON")
+    print("PASS | 02 registration persisted")
 
 
-    # 4. 수어 MQTT -> command + 논리적 state publish
+    # 3. 등록된 수어 -> aircon ON command 1회 publish
     sign_payload = json.dumps(
         {
             "text": "에어컨",
         },
         ensure_ascii=False,
-    )
+    ).encode("utf-8")
 
-    sign_message = FakeMessage(
-        main.SIGN_TRANSLATION_TOPIC,
+    application.router.route(
+        SIGN_TRANSLATION_TOPIC,
         sign_payload,
     )
 
-    with patch(
-        "sign_shortcut.core.sign_shortcut_controller.time.monotonic",
-        side_effect=[
-            100.0,
-            100.1,
-        ],
-    ):
-        main.on_message(
-            fake_client,
-            None,
-            sign_message,
-        )
+    assert len(fake_client.publishes) == 1
 
-        assert len(fake_client.publishes) == 2
+    command = fake_client.publishes[0]
 
-        command_publish = fake_client.publishes[0]
-        state_publish = fake_client.publishes[1]
+    assert (
+        command["topic"]
+        == "safehub/control/livingroom/aircon/command"
+    )
 
-        assert (
-            command_publish["topic"]
-            == "safehub/control/livingroom/aircon/command"
-        )
+    assert json.loads(command["payload"]) == {
+        "source": "sign_shortcut",
+        "action": "set_power",
+        "power_on": True,
+    }
 
-        assert json.loads(command_publish["payload"]) == {
-            "source": "sign_shortcut",
-            "action": "set_power",
-            "power_on": True,
-        }
+    assert command["qos"] == 1
+    assert command["retain"] is False
 
-        assert command_publish["qos"] == 1
-        assert command_publish["retain"] is False
-
-        assert (
-            state_publish["topic"]
-            == "safehub/state/livingroom/aircon"
-        )
-
-        assert json.loads(state_publish["payload"]) == {
-            "source": "sign_shortcut",
-            "power_on": True,
-        }
-
-        assert state_publish["qos"] == 1
-        assert state_publish["retain"] is False
-
-        print(
-            "PASS | 04 sign MQTT publishes command and logical state"
-        )
+    print("PASS | 03 sign publishes aircon ON command")
 
 
-        # 5. cooldown 중 동일 수어는 command/state 모두 추가 발행 안 함
-        main.on_message(
-            fake_client,
-            None,
-            sign_message,
-        )
+    # 4. 같은 수어 재실행 -> aircon OFF command
+    application.router.route(
+        SIGN_TRANSLATION_TOPIC,
+        sign_payload,
+    )
 
-        assert len(fake_client.publishes) == 2
-        assert action_executor.livingroom_aircon_power_on is True
+    assert len(fake_client.publishes) == 2
 
-        print(
-            "PASS | 05 cooldown blocks duplicate command and state"
-        )
+    second_command = fake_client.publishes[1]
+
+    assert json.loads(second_command["payload"]) == {
+        "source": "sign_shortcut",
+        "action": "set_power",
+        "power_on": False,
+    }
+
+    print("PASS | 04 repeated sign publishes aircon OFF command")
 
 
-    # 6. 프로그램 재시작을 가정하고 JSON에서 단축키 복원
-    restored_manager = ShortcutManager()
+    # 5. 등록되지 않은 수어 -> publish 없음
+    before_publish_count = len(
+        fake_client.publishes
+    )
 
-    main.shortcut_manager = restored_manager
-    main.shortcut_store = ShortcutStore(store_path)
+    unknown_payload = json.dumps(
+        {
+            "text": "감사",
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
 
-    main.load_shortcuts()
+    application.router.route(
+        SIGN_TRANSLATION_TOPIC,
+        unknown_payload,
+    )
 
-    restored = restored_manager.find_by_sign("에어컨")
+    assert (
+        len(fake_client.publishes)
+        == before_publish_count
+    )
+
+    print("PASS | 05 unregistered sign publishes nothing")
+
+
+    # 6. 재시작 가정 -> JSON에서 단축키 복원
+    restarted_client = FakeMqttClient()
+
+    restarted_application = main.build_application(
+        config=config,
+        client=restarted_client,
+    )
+
+    restored = (
+        restarted_application
+        .shortcut_manager
+        .find_by_sign("에어컨")
+    )
 
     assert restored is not None
     assert restored.room == "livingroom"
     assert restored.device == "aircon"
     assert restored.action == "toggle"
 
-    print("PASS | 06 restart restores shortcut from JSON")
+    print("PASS | 06 restart restores shortcut")
 
 
-    # 복원된 manager를 사용하는 등록 handler로 교체
-    main.registration_handler = ShortcutRegistrationHandler(
-        restored_manager
-    )
-
-
-    # 7. 삭제 MQTT -> 메모리 삭제 + JSON 갱신
+    # 7. 삭제 -> 메모리와 JSON 모두 갱신
     remove_payload = json.dumps(
         {
             "operation": "remove",
             "sign": "에어컨",
         },
         ensure_ascii=False,
-    )
+    ).encode("utf-8")
 
-    remove_message = FakeMessage(
-        main.SHORTCUT_COMMAND_TOPIC,
+    restarted_application.router.route(
+        SHORTCUT_COMMAND_TOPIC,
         remove_payload,
     )
 
-    main.on_message(
-        fake_client,
-        None,
-        remove_message,
+    assert (
+        restarted_application
+        .shortcut_manager
+        .find_by_sign("에어컨")
+        is None
     )
-
-    assert restored_manager.find_by_sign("에어컨") is None
 
     saved_after_remove = json.loads(
         store_path.read_text(encoding="utf-8")
@@ -335,38 +248,59 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
     assert saved_after_remove == []
 
-    print("PASS | 07 remove MQTT updates shortcut JSON")
+    print("PASS | 07 removal updates persisted shortcuts")
 
 
-    # 8. 기존 CSI 메시지도 EventManager로 정상 전달
-    main.event_manager = EventManager()
+    # 8. 침실 CSI -> EventManager
+    bedroom_payload = json.dumps(
+        {
+            "event": "fall_detected",
+            "priority": 9,
+        }
+    ).encode("utf-8")
 
-    csi_payload = json.dumps(
+    restarted_application.router.route(
+        BEDROOM_TOPIC,
+        bedroom_payload,
+    )
+
+    bedroom_event = (
+        restarted_application
+        .event_manager
+        .get_next_event()
+    )
+
+    assert bedroom_event is not None
+    assert bedroom_event["event"] == "fall_detected"
+    assert bedroom_event["priority"] == 9
+
+    print("PASS | 08 bedroom CSI reaches EventManager")
+
+
+    # 9. 화장실 CSI -> EventManager
+    bathroom_payload = json.dumps(
         {
             "event": "fall_detected",
             "priority": 10,
-        },
-        ensure_ascii=False,
+        }
+    ).encode("utf-8")
+
+    restarted_application.router.route(
+        BATHROOM_TOPIC,
+        bathroom_payload,
     )
 
-    csi_message = FakeMessage(
-        main.BEDROOM_TOPIC,
-        csi_payload,
+    bathroom_event = (
+        restarted_application
+        .event_manager
+        .get_next_event()
     )
 
-    main.on_message(
-        fake_client,
-        None,
-        csi_message,
-    )
+    assert bathroom_event is not None
+    assert bathroom_event["event"] == "fall_detected"
+    assert bathroom_event["priority"] == 10
 
-    queued_event = main.event_manager.get_next_event()
-
-    assert queued_event is not None
-    assert queued_event["event"] == "fall_detected"
-    assert queued_event["priority"] == 10
-
-    print("PASS | 08 CSI MQTT still reaches EventManager")
+    print("PASS | 09 bathroom CSI reaches EventManager")
 
 
 print()
